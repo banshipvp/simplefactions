@@ -1,0 +1,8 @@
+name: SimpleFactions
+version: 0.1.0
+main: local.simplefactions.SimpleFactionsPlugin
+api-version: "1.21"
+commands:
+  f:
+    description: Factions command
+    usage: /f
