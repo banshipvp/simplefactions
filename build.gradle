@@ -17,10 +17,16 @@ repositories {
         name = "dmulloy2-repo"
         url = "https://repo.dmulloy2.net/repository/public/"
     }
+
+    maven {
+        name = "jitpack"
+        url = "https://jitpack.io"
+    }
 }
 
 dependencies {
     compileOnly "io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT"
+    compileOnly "com.github.MilkBowl:VaultAPI:1.7.1"
 }
 
 java {

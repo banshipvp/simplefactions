@@ -1,0 +1,205 @@
+// CORE CHUNK SYSTEM - QUICK REFERENCE
+// ====================================
+
+// ========================
+// INITIALIZATION (In your plugin's onEnable)
+// ========================
+
+SimpleFactionsPlugin sf = (SimpleFactionsPlugin) Bukkit.getPluginManager().getPlugin("SimpleFactions");
+FactionManager factionManager = sf.getFactionManager();
+CoreChunkManager coreManager = sf.getCoreChunkManager();
+
+
+// ========================
+// CHECK IF FACTION HAS CORE
+// ========================
+
+if (coreManager.hasCoreChunk("FactionName")) {
+    // Faction has a core chunk
+}
+
+
+// ========================
+// GET CORE INFORMATION
+// ========================
+
+CoreChunk core = coreManager.getCoreChunk("FactionName");
+
+double health = core.getCurrentPoints();           // Current HP
+double maxHealth = core.getMaxPoints();            // Max HP
+double healthPercent = core.getHealthPercentage(); // 0-100%
+
+double pvpPoints = core.getPvpPoints();
+double spawnerPoints = core.getSpawnerPoints();
+double challengePoints = core.getChallengePoints();
+double resourcePoints = core.getCoreChunkNotes();
+double totalPoints = core.getTotalPoints();
+
+
+// ========================
+// DEAL DAMAGE
+// ========================
+
+// Direct damage
+coreManager.damageCore("FactionName", 500.0);
+
+// Damage based on hits
+coreManager.applyRaidDamage("FactionName", 3);  // 3 hits = 150 damage (default)
+
+// Returns true if core still exists, false if destroyed
+
+
+// ========================
+// ADD POINTS
+// ========================
+
+// PVP Activity
+coreManager.addPvpKill("FactionName");              // +100 points (default)
+coreManager.addPvpPoints("FactionName", 250.0);     // Custom amount
+
+// Spawners
+coreManager.addSpawnerPoints("FactionName", 5);     // 5 spawners = 2500 points (default)
+coreManager.removeSpawnerPoints("FactionName", 2);  // 2 spawners = -1000 points
+
+// Challenges
+coreManager.addChallengeCompletion("FactionName");  // +250 points (default)
+coreManager.addChallengePoints("FactionName", 500.0); // Custom amount
+
+// Resources/Notes
+coreManager.addCoreChunkNotes("FactionName", 1000.0);
+
+
+// ========================
+// REPAIR CORE
+// ========================
+
+coreManager.repairCore("FactionName", 500.0);      // Partial repair
+coreManager.fullRepairCore("FactionName");         // Heal to max
+
+
+// ========================
+// CONFIGURATION
+// ========================
+
+coreManager.setBaseMaxPoints(10000.0);             // Base max HP
+coreManager.setPointsPerSpawner(500.0);            // Per spawner
+coreManager.setPointsPerPvpKill(100.0);            // Per PVP kill
+coreManager.setPointsPerChallenge(250.0);          // Per challenge
+coreManager.setDamagePerRaidHit(50.0);             // Per hit in applyRaidDamage()
+
+
+// ========================
+// GET ALL CORES
+// ========================
+
+Collection<CoreChunk> allCores = coreManager.getAllCoreChunks();
+for (CoreChunk c : allCores) {
+    System.out.println(c.toString());
+}
+
+
+// ========================
+// EVENT LISTENER EXAMPLE
+// ========================
+
+public class MyRaidListener implements Listener {
+    
+    private CoreChunkManager coreManager;
+    
+    public MyRaidListener(SimpleFactionsPlugin sf) {
+        this.coreManager = sf.getCoreChunkManager();
+    }
+    
+    @EventHandler
+    public void onCoreHit(YourCustomRaidEvent event) {
+        String targetFaction = event.getTargetFactionName();
+        
+        if (!coreManager.hasCoreChunk(targetFaction)) {
+            return;  // No core to raid
+        }
+        
+        // Deal damage
+        boolean coreActive = coreManager.damageCore(targetFaction, 150.0);
+        
+        if (!coreActive) {
+            Bukkit.broadcastMessage(targetFaction + "'s core has been destroyed!");
+        }
+    }
+}
+
+
+// ========================
+// DISPLAY CORE STATUS
+// ========================
+
+CoreChunk core = coreManager.getCoreChunk("FactionName");
+Bukkit.broadcastMessage(String.format(
+    "%s Core: %.0f/%.0f (%.1f%%)",
+    core.getFactionName(),
+    core.getCurrentPoints(),
+    core.getMaxPoints(),
+    core.getHealthPercentage()
+));
+
+
+// ========================
+// USEFUL STRING METHODS
+// ========================
+
+core.toString();                    // Full formatted string with all info
+core.getFactionName();              // Faction name
+core.getChunkKey();                 // "world:x:z" format
+
+
+// ========================
+// DESTRUCTION
+// ========================
+
+// Cores are ONLY destroyed by:
+// 1. /f unclaimall (only way for players)
+// 2. Faction disband
+// 3. Manual destroy via: coreManager.destroyCoreChunk("FactionName")
+
+coreManager.destroyCoreChunk("FactionName");  // Manual destruction
+
+
+// ========================
+// COMMON PATTERNS
+// ========================
+
+// Pattern 1: Check and damage
+if (coreManager.hasCoreChunk(faction)) {
+    boolean alive = coreManager.damageCore(faction, damage);
+    if (!alive) { /* core destroyed */ }
+}
+
+// Pattern 2: Add points on event
+if (coreManager.hasCoreChunk(faction)) {
+    coreManager.addPvpKill(faction);
+}
+
+// Pattern 3: Get formatted display
+CoreChunk c = coreManager.getCoreChunk(faction);
+if (c != null) {
+    String display = String.format("%s | %.0f/%.0f HP | %.1f%%",
+        c.getFactionName(), c.getCurrentPoints(), c.getMaxPoints(), c.getHealthPercentage());
+}
+
+// Pattern 4: Loop all cores
+for (CoreChunk c : coreManager.getAllCoreChunks()) {
+    // Process each core
+}
+
+
+// ========================
+// IMPORTANT NOTES
+// ========================
+
+/*
+✅ Core is created on first claim automatically
+✅ Core persists through unclaim/reclaim of other chunks
+✅ Core only destroyed by unclaimAll or disband
+✅ Points accumulate and never decrease (except when spawners removed)
+✅ Health/points are capped at maxPoints
+✅ Damage taken is cumulative and permanently tracked
+*/

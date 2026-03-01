@@ -6,3 +6,7 @@ commands:
   f:
     description: Factions command
     usage: /f
+  help:
+    description: Show server plugin command help
+    usage: /help [page]
+    aliases: [shelp, serverhelp]
