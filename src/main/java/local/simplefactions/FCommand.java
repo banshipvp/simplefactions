@@ -16,18 +16,51 @@ import org.bukkit.inventory.ItemStack;
 
 import java.util.*;
 
-public class FCommand implements CommandExecutor {
+public class FCommand implements CommandExecutor, TabCompleter {
 
     private final FactionManager manager;
     private final UpgradeGUI upgradeGUI;
+    private final FactionAccessGui accessGui;
 
-    public FCommand(FactionManager manager, UpgradeGUI upgradeGUI) {
+    public FCommand(FactionManager manager, UpgradeGUI upgradeGUI, FactionAccessGui accessGui) {
         this.manager = manager;
         this.upgradeGUI = upgradeGUI;
+        this.accessGui = accessGui;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+
+        // Console-safe wand-give command: /f givewand <player> <sell|tnt>
+        if (args.length >= 1 && args[0].equalsIgnoreCase("givewand")) {
+            if (!(sender instanceof Player) && !(sender instanceof ConsoleCommandSender)) {
+                sender.sendMessage("Unknown sender.");
+                return true;
+            }
+            if (args.length < 3) {
+                sender.sendMessage("Usage: /f givewand <player> <sell|tnt>");
+                return true;
+            }
+            Player target = Bukkit.getPlayerExact(args[1]);
+            if (target == null) {
+                sender.sendMessage("Player '" + args[1] + "' is not online.");
+                return true;
+            }
+            switch (args[2].toLowerCase()) {
+                case "sell" -> {
+                    Map<Integer, ItemStack> lr = target.getInventory().addItem(WandItems.createSellWand());
+                    if (!lr.isEmpty()) { sender.sendMessage("Inventory full."); }
+                    else { target.sendMessage("\u00a7aYou received a \u00a76Sell Wand\u00a7a."); }
+                }
+                case "tnt" -> {
+                    Map<Integer, ItemStack> lr = target.getInventory().addItem(WandItems.createTntWand());
+                    if (!lr.isEmpty()) { sender.sendMessage("Inventory full."); }
+                    else { target.sendMessage("\u00a7aYou received a \u00a7cTNT Wand\u00a7a."); }
+                }
+                default -> sender.sendMessage("Usage: /f givewand <player> <sell|tnt>");
+            }
+            return true;
+        }
 
         if (!(sender instanceof Player player)) {
             sender.sendMessage("Players only.");
@@ -65,6 +98,8 @@ public class FCommand implements CommandExecutor {
             case "claim" -> handleClaim(player, args);
             case "unclaim" -> handleUnclaim(player, args);
             case "unclaimall" -> unclaimAll(player);
+            case "access" -> accessCommand(player, args);
+            case "perm", "permission", "permissions" -> permCommand(player, args);
 
             case "kick" -> kick(player, args);
             case "promote" -> promote(player, args);
@@ -106,6 +141,8 @@ public class FCommand implements CommandExecutor {
         p.sendMessage("§6/f mapgui");
         p.sendMessage("§6/f claim");
         p.sendMessage("§6/f claim radius <1-5>");
+        p.sendMessage("§6/f access p <player> [all|radius <chunks>]");
+        p.sendMessage("§6/f perm [p <player>]");
         p.sendMessage("§6/f unclaim");
         p.sendMessage("§6/f unclaim radius <1-5>");
         p.sendMessage("§6/f unclaimall");
@@ -310,6 +347,18 @@ public class FCommand implements CommandExecutor {
         FactionManager.Faction faction = manager.getFactionByName(args[1]);
         if (faction == null) {
             player.sendMessage("§cFaction not found.");
+            return;
+        }
+
+        // ── System factions (Warzone) — show simplified description only ──
+        if (manager.isSystemFaction(faction)) {
+            player.sendMessage(" ");
+            player.sendMessage("§6§l" + centerText(faction.getName(), 40) + "§r");
+            player.sendMessage("§7" + faction.getDescription());
+            player.sendMessage(" ");
+            player.sendMessage("§7Claims: §f" + faction.getClaims().size());
+            player.sendMessage("§8This is a system-managed faction — it has no members.");
+            player.sendMessage(" ");
             return;
         }
 
@@ -612,8 +661,27 @@ public class FCommand implements CommandExecutor {
 
             int claimed = 0;
 
+            boolean firstClaimForFaction = faction.getClaims().isEmpty();
+            if (firstClaimForFaction) {
+                FactionManager.Faction centerOwner = manager.getFactionByChunk(world.getName(), center.getX(), center.getZ());
+                if (centerOwner != null) {
+                    player.sendMessage("§cCannot claim radius here because your core chunk must be your current chunk, and it is already claimed.");
+                    return;
+                }
+
+                if (manager.claimChunk(faction, world.getName(), center.getX(), center.getZ())) {
+                    claimed++;
+                } else {
+                    player.sendMessage("§cFailed to establish your core chunk at your current location.");
+                    return;
+                }
+            }
+
             for (int x = -radius; x <= radius; x++) {
                 for (int z = -radius; z <= radius; z++) {
+                    if (firstClaimForFaction && x == 0 && z == 0) {
+                        continue;
+                    }
 
                     if (manager.getFactionByChunk(world.getName(),
                             center.getX() + x,
@@ -674,9 +742,14 @@ public class FCommand implements CommandExecutor {
             radius = Math.min(radius, 5);
 
             int removed = 0;
+            int blockedCore = 0;
 
             for (int x = -radius; x <= radius; x++) {
                 for (int z = -radius; z <= radius; z++) {
+                    if (manager.isCoreChunk(faction, world.getName(), center.getX() + x, center.getZ() + z)) {
+                        blockedCore++;
+                        continue;
+                    }
                     if (manager.unclaimChunk(faction, world.getName(), center.getX() + x, center.getZ() + z)) {
                         removed++;
                     }
@@ -684,6 +757,14 @@ public class FCommand implements CommandExecutor {
             }
 
             player.sendMessage("§aUnclaimed §f" + removed + "§a chunks.");
+            if (blockedCore > 0) {
+                player.sendMessage("§cUnable to unclaim corechunk. You must use /f unclaimall.");
+            }
+            return;
+        }
+
+        if (manager.isCoreChunk(faction, world.getName(), center.getX(), center.getZ())) {
+            player.sendMessage("§cUnable to unclaim corechunk. You must use /f unclaimall.");
             return;
         }
 
@@ -709,6 +790,150 @@ public class FCommand implements CommandExecutor {
         int count = faction.getClaims().size();
         manager.unclaimAll(faction);
         player.sendMessage("§aUnclaimed §f" + count + "§a chunks.");
+    }
+
+    private void accessCommand(Player player, String[] args) {
+        FactionManager.Faction faction = manager.getFaction(player.getUniqueId());
+        if (faction == null) {
+            player.sendMessage("§cYou are not in a faction.");
+            return;
+        }
+
+        if (!manager.hasPerm(player.getUniqueId(), FactionPermission.FLAG)) {
+            player.sendMessage("§cYou do not have permission to manage access.");
+            return;
+        }
+
+        if (args.length < 3 || !args[1].equalsIgnoreCase("p")) {
+            player.sendMessage("§cUsage: /f access p <player> [all|radius <chunks>]");
+            return;
+        }
+
+        Player target = Bukkit.getPlayer(args[2]);
+        if (target == null) {
+            player.sendMessage("§cPlayer not found online.");
+            return;
+        }
+
+        if (target.getUniqueId().equals(player.getUniqueId())) {
+            player.sendMessage("§cYou already have access to your own claims.");
+            return;
+        }
+
+        if (faction.isMember(target.getUniqueId())) {
+            player.sendMessage("§eThat player is already in your faction.");
+            return;
+        }
+
+        if (args.length == 3) {
+            var chunk = player.getLocation().getChunk();
+            boolean success = manager.grantAccessChunk(player.getUniqueId(), target.getUniqueId(), player.getWorld().getName(), chunk.getX(), chunk.getZ());
+            if (!success) {
+                player.sendMessage("§cCould not grant chunk access.");
+                return;
+            }
+
+            player.sendMessage("§aGranted §f" + target.getName() + "§a access for this claim chunk.");
+            target.sendMessage("§aYou now have access to a claim chunk in faction §f" + faction.getName() + "§a.");
+            return;
+        }
+
+        if (args[3].equalsIgnoreCase("all")) {
+            boolean success = manager.grantAccessAll(player.getUniqueId(), target.getUniqueId());
+            if (!success) {
+                player.sendMessage("§cCould not grant all-claims access.");
+                return;
+            }
+
+            player.sendMessage("§aGranted §f" + target.getName() + "§a access to all faction claims.");
+            target.sendMessage("§aYou now have access to all claims in faction §f" + faction.getName() + "§a.");
+            return;
+        }
+
+        if (args[3].equalsIgnoreCase("radius")) {
+            if (args.length < 5) {
+                player.sendMessage("§cUsage: /f access p <player> radius <chunks>");
+                return;
+            }
+
+            int radius;
+            try {
+                radius = Integer.parseInt(args[4]);
+            } catch (NumberFormatException ex) {
+                player.sendMessage("§cRadius must be a number.");
+                return;
+            }
+
+            if (radius < 1) {
+                player.sendMessage("§cRadius must be at least 1.");
+                return;
+            }
+
+            radius = Math.min(radius, 10);
+            var chunk = player.getLocation().getChunk();
+            int granted = manager.grantAccessRadius(
+                    player.getUniqueId(),
+                    target.getUniqueId(),
+                    player.getWorld().getName(),
+                    chunk.getX(),
+                    chunk.getZ(),
+                    radius
+            );
+
+            player.sendMessage("§aGranted §f" + target.getName() + "§a access to §f" + granted + "§a claim chunks.");
+            target.sendMessage("§aYou now have radius-based access in faction §f" + faction.getName() + "§a claims.");
+            return;
+        }
+
+        player.sendMessage("§cUsage: /f access p <player> [all|radius <chunks>]");
+    }
+
+    private void permCommand(Player player, String[] args) {
+        FactionManager.Faction faction = manager.getFaction(player.getUniqueId());
+        if (faction == null) {
+            player.sendMessage("§cYou are not in a faction.");
+            return;
+        }
+
+        if (!manager.hasPerm(player.getUniqueId(), FactionPermission.FLAG)) {
+            player.sendMessage("§cYou do not have permission to manage claim permissions.");
+            return;
+        }
+
+        if (args.length == 1) {
+            accessGui.openPlayerSelector(player);
+            return;
+        }
+
+        if (args.length >= 3 && args[1].equalsIgnoreCase("p")) {
+            Player target = Bukkit.getPlayer(args[2]);
+            if (target == null) {
+                player.sendMessage("§cPlayer not found online.");
+                return;
+            }
+
+            if (target.getUniqueId().equals(player.getUniqueId())) {
+                player.sendMessage("§cYou cannot edit your own claim access here.");
+                return;
+            }
+
+            if (faction.isMember(target.getUniqueId())) {
+                player.sendMessage("§eThat player is in your faction and already has faction-member access.");
+                return;
+            }
+
+            manager.grantAccessChunk(
+                    player.getUniqueId(),
+                    target.getUniqueId(),
+                    player.getWorld().getName(),
+                    player.getLocation().getChunk().getX(),
+                    player.getLocation().getChunk().getZ()
+            );
+            accessGui.openPlayerSelector(player);
+            return;
+        }
+
+        player.sendMessage("§cUsage: /f perm [p <player>]");
     }
 
     /* ================= KICK / PROMOTE / DEMOTE ================= */
@@ -1483,5 +1708,73 @@ public class FCommand implements CommandExecutor {
         if (num < 1_000_000) return String.format("%.1f", num / 1000) + "K";
         if (num < 1_000_000_000) return String.format("%.1f", num / 1_000_000) + "M";
         return String.format("%.1f", num / 1_000_000_000) + "B";
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (!(sender instanceof Player player)) {
+            return Collections.emptyList();
+        }
+
+        if (args.length == 1) {
+            return filterByPrefix(args[0], List.of("access", "perm", "permission", "permissions"));
+        }
+
+        String sub = args[0].toLowerCase(Locale.ROOT);
+
+        if (sub.equals("access")) {
+            if (args.length == 2) {
+                return filterByPrefix(args[1], List.of("p"));
+            }
+
+            if (args.length == 3 && args[1].equalsIgnoreCase("p")) {
+                return onlinePlayerNames(args[2], player.getName());
+            }
+
+            if (args.length == 4 && args[1].equalsIgnoreCase("p")) {
+                return filterByPrefix(args[3], List.of("all", "radius"));
+            }
+
+            if (args.length == 5 && args[1].equalsIgnoreCase("p") && args[3].equalsIgnoreCase("radius")) {
+                return filterByPrefix(args[4], List.of("1", "2", "3", "4", "5", "8", "10"));
+            }
+        }
+
+        if (sub.equals("perm") || sub.equals("permission") || sub.equals("permissions")) {
+            if (args.length == 2) {
+                return filterByPrefix(args[1], List.of("p"));
+            }
+
+            if (args.length == 3 && args[1].equalsIgnoreCase("p")) {
+                return onlinePlayerNames(args[2], player.getName());
+            }
+        }
+
+        return Collections.emptyList();
+    }
+
+    private List<String> onlinePlayerNames(String prefix, String excludeName) {
+        String lowered = prefix.toLowerCase(Locale.ROOT);
+        List<String> names = new ArrayList<>();
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            String name = online.getName();
+            if (name.equalsIgnoreCase(excludeName)) continue;
+            if (name.toLowerCase(Locale.ROOT).startsWith(lowered)) {
+                names.add(name);
+            }
+        }
+        names.sort(String::compareToIgnoreCase);
+        return names;
+    }
+
+    private List<String> filterByPrefix(String prefix, List<String> options) {
+        String lowered = prefix.toLowerCase(Locale.ROOT);
+        List<String> result = new ArrayList<>();
+        for (String option : options) {
+            if (option.toLowerCase(Locale.ROOT).startsWith(lowered)) {
+                result.add(option);
+            }
+        }
+        return result;
     }
 }

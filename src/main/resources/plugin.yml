@@ -10,3 +10,25 @@ commands:
     description: Show server plugin command help
     usage: /help [page]
     aliases: [shelp, serverhelp]
+  hub:
+    description: Teleport to the hub
+    usage: /hub
+    default: true
+  sethub:
+    description: Set the hub spawn point
+    usage: /sethub
+    permission: simplefactions.sethub
+    default: op
+  warzone:
+    description: Manage warzone/safezone chunk claims
+    usage: /warzone <claim|unclaim|autoclaim>
+    permission: simplefactions.admin
+    default: op
+
+permissions:
+  simplefactions.sethub:
+    description: Set the hub location
+    default: op
+  simplefactions.admin:
+    description: Admin access to warzone management and other admin tools
+    default: op

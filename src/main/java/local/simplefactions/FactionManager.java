@@ -4,8 +4,13 @@ import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
 
 public class FactionManager {
@@ -53,6 +58,11 @@ public class FactionManager {
         
         // player titles stored as UUID -> title
         private final java.util.Map<UUID, String> playerTitles = new java.util.HashMap<>();
+
+        // external access control (non-faction members)
+        private final java.util.Map<UUID, java.util.Set<ClaimAccessPermission>> playerAccessPermissions = new java.util.HashMap<>();
+        private final java.util.Map<UUID, java.util.Set<String>> playerChunkAccess = new java.util.HashMap<>();
+        private final java.util.Set<UUID> playerAllClaimsAccess = new java.util.HashSet<>();
         
         // upgrades: maxMembers, spawnerMultiplier, maxWarps, chestSlots
         private int upgradeMaxMembers = 0;      // level 0 = 10 base
@@ -197,6 +207,11 @@ public class FactionManager {
         public void setPlayerTitle(UUID player, String title) { playerTitles.put(player, title); }
         public void removePlayerTitle(UUID player) { playerTitles.remove(player); }
 
+        // ----- external claim access -----
+        public java.util.Map<UUID, java.util.Set<ClaimAccessPermission>> getPlayerAccessPermissions() { return playerAccessPermissions; }
+        public java.util.Map<UUID, java.util.Set<String>> getPlayerChunkAccess() { return playerChunkAccess; }
+        public java.util.Set<UUID> getPlayerAllClaimsAccess() { return playerAllClaimsAccess; }
+
         public Location getHome() {
             if (homeWorld == null) return null;
             World w = Bukkit.getWorld(homeWorld);
@@ -216,6 +231,9 @@ public class FactionManager {
     }
 
     private static final long INVITE_TTL_MS = 5L * 60_000L; // 5 minutes
+
+    /** Fixed UUID used as the leader placeholder for system factions (Warzone, Safezone, etc.). */
+    public static final UUID SYSTEM_FACTION_UUID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     private final Map<String, Faction> factions = new HashMap<>();      // key = lowercase faction name
     private final Map<UUID, String> playerFaction = new HashMap<>();    // player -> factionKey
@@ -272,6 +290,124 @@ public class FactionManager {
         };
     }
 
+    public boolean canAccessClaim(UUID player, String world, int x, int z, ClaimAccessPermission permission) {
+        String ownerKey = claims.get(chunkKey(world, x, z));
+        if (ownerKey == null) return true;
+
+        Faction ownerFaction = factions.get(ownerKey);
+        if (ownerFaction == null) return true;
+
+        // Faction members always have base access handled by role/commands.
+        String playerFactionKey = playerFaction.get(player);
+        if (playerFactionKey != null && playerFactionKey.equalsIgnoreCase(ownerKey)) {
+            return true;
+        }
+
+        java.util.Set<ClaimAccessPermission> perms = ownerFaction.getPlayerAccessPermissions().get(player);
+        if (perms == null || !perms.contains(permission)) {
+            return false;
+        }
+
+        if (ownerFaction.getPlayerAllClaimsAccess().contains(player)) {
+            return true;
+        }
+
+        java.util.Set<String> chunkAccess = ownerFaction.getPlayerChunkAccess().get(player);
+        return chunkAccess != null && chunkAccess.contains(chunkKey(world, x, z));
+    }
+
+    public boolean grantAccessChunk(UUID actor, UUID target, String world, int chunkX, int chunkZ) {
+        Faction faction = getFaction(actor);
+        if (faction == null) return false;
+        if (!hasPerm(actor, FactionPermission.FLAG)) return false;
+        if (faction.isMember(target)) return false;
+
+        faction.getPlayerChunkAccess()
+                .computeIfAbsent(target, ignored -> new java.util.HashSet<>())
+                .add(chunkKey(world, chunkX, chunkZ));
+
+        ensureDefaultAccessPerms(faction, target);
+        faction.getPlayerAllClaimsAccess().remove(target);
+        return true;
+    }
+
+    public int grantAccessRadius(UUID actor, UUID target, String world, int centerChunkX, int centerChunkZ, int radius) {
+        Faction faction = getFaction(actor);
+        if (faction == null) return 0;
+        if (!hasPerm(actor, FactionPermission.FLAG)) return 0;
+        if (faction.isMember(target)) return 0;
+
+        int granted = 0;
+        java.util.Set<String> allowed = faction.getPlayerChunkAccess()
+                .computeIfAbsent(target, ignored -> new java.util.HashSet<>());
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                String key = chunkKey(world, centerChunkX + dx, centerChunkZ + dz);
+                if (faction.getClaims().contains(key) && allowed.add(key)) {
+                    granted++;
+                }
+            }
+        }
+
+        ensureDefaultAccessPerms(faction, target);
+        faction.getPlayerAllClaimsAccess().remove(target);
+        return granted;
+    }
+
+    public boolean grantAccessAll(UUID actor, UUID target) {
+        Faction faction = getFaction(actor);
+        if (faction == null) return false;
+        if (!hasPerm(actor, FactionPermission.FLAG)) return false;
+        if (faction.isMember(target)) return false;
+
+        faction.getPlayerAllClaimsAccess().add(target);
+        faction.getPlayerChunkAccess().remove(target);
+        ensureDefaultAccessPerms(faction, target);
+        return true;
+    }
+
+    public java.util.Set<UUID> getAccessPlayers(Faction faction) {
+        java.util.Set<UUID> players = new java.util.HashSet<>();
+        players.addAll(faction.getPlayerAccessPermissions().keySet());
+        players.addAll(faction.getPlayerChunkAccess().keySet());
+        players.addAll(faction.getPlayerAllClaimsAccess());
+        return players;
+    }
+
+    public java.util.Set<ClaimAccessPermission> getAccessPermissions(Faction faction, UUID target) {
+        ensureDefaultAccessPerms(faction, target);
+        return faction.getPlayerAccessPermissions().getOrDefault(target, java.util.EnumSet.noneOf(ClaimAccessPermission.class));
+    }
+
+    public void setAccessPermission(UUID actor, UUID target, ClaimAccessPermission permission, boolean allowed) {
+        Faction faction = getFaction(actor);
+        if (faction == null) return;
+        if (!hasPerm(actor, FactionPermission.FLAG)) return;
+        if (faction.isMember(target)) return;
+
+        ensureDefaultAccessPerms(faction, target);
+        java.util.Set<ClaimAccessPermission> perms = faction.getPlayerAccessPermissions().get(target);
+        if (allowed) {
+            perms.add(permission);
+        } else {
+            perms.remove(permission);
+        }
+    }
+
+    public boolean hasAllClaimsAccess(Faction faction, UUID target) {
+        return faction.getPlayerAllClaimsAccess().contains(target);
+    }
+
+    public int getSpecificChunkAccessCount(Faction faction, UUID target) {
+        java.util.Set<String> chunks = faction.getPlayerChunkAccess().get(target);
+        return chunks == null ? 0 : chunks.size();
+    }
+
+    private void ensureDefaultAccessPerms(Faction faction, UUID target) {
+        faction.getPlayerAccessPermissions().computeIfAbsent(target, ignored -> java.util.EnumSet.allOf(ClaimAccessPermission.class));
+    }
+
     /* ================= CREATE ================= */
 
     public boolean createFaction(String name, UUID owner) {
@@ -285,6 +421,25 @@ public class FactionManager {
         factions.put(key, faction);
         playerFaction.put(owner, key);
         return true;
+    }
+
+    /**
+     * Create a system faction (e.g. "Warzone") that has no real player leader.
+     * The faction is not added to playerFaction so no player is "in" it.
+     */
+    public boolean createSystemFaction(String name, String description) {
+        String key = name.toLowerCase();
+        if (factions.containsKey(key)) return false;
+        Faction faction = new Faction(name, SYSTEM_FACTION_UUID);
+        faction.roles.clear(); // system factions have no real members
+        faction.setDescription(description);
+        factions.put(key, faction);
+        return true;
+    }
+
+    /** Returns true if this faction is a system-managed faction (no real leader). */
+    public boolean isSystemFaction(FactionManager.Faction faction) {
+        return faction != null && SYSTEM_FACTION_UUID.equals(faction.getLeader());
     }
 
     /* ================= INVITES ================= */
@@ -396,6 +551,9 @@ public class FactionManager {
             claims.remove(claimKey);
         }
         f.getClaims().clear();
+        f.getPlayerAccessPermissions().clear();
+        f.getPlayerChunkAccess().clear();
+        f.getPlayerAllClaimsAccess().clear();
 
         // Destroy the core chunk if it exists
         coreChunkManager.destroyCoreChunk(f.getName());
@@ -428,10 +586,47 @@ public class FactionManager {
         String key = chunkKey(world, x, z);
 
         if (!faction.getClaims().contains(key)) return false;
+        if (isCoreChunk(faction, world, x, z)) return false;
 
         faction.getClaims().remove(key);
         claims.remove(key);
         return true;
+    }
+
+    /**
+     * Claim a chunk directly to the "Warzone" system faction.
+     * Bypasses core chunk creation and claim limits.
+     */
+    public boolean claimChunkWarzone(String world, int x, int z) {
+        Faction wz = factions.get("warzone");
+        if (wz == null) return false;
+        String key = chunkKey(world, x, z);
+        if (claims.containsKey(key)) return false;
+        claims.put(key, "warzone");
+        wz.getClaims().add(key);
+        return true;
+    }
+
+    /** Unclaim a chunk from the Warzone system faction. */
+    public boolean unclaimChunkWarzone(String world, int x, int z) {
+        Faction wz = factions.get("warzone");
+        if (wz == null) return false;
+        String key = chunkKey(world, x, z);
+        if (!wz.getClaims().contains(key)) return false;
+        wz.getClaims().remove(key);
+        claims.remove(key);
+        return true;
+    }
+
+    /** Public chunk-key builder for use by warzone commands. */
+    public String toChunkKey(String world, int x, int z) {
+        return chunkKey(world, x, z);
+    }
+
+    public boolean isCoreChunk(Faction faction, String world, int x, int z) {
+        CoreChunk core = coreChunkManager.getCoreChunk(faction.getName());
+        if (core == null) return false;
+        return core.getChunkKey().equalsIgnoreCase(chunkKey(world, x, z));
     }
 
     public void unclaimAll(Faction faction) {
@@ -552,5 +747,355 @@ public class FactionManager {
     
     public CoreChunkManager getCoreChunkManager() {
         return coreChunkManager;
+    }
+    
+    /* ================= DATA PERSISTENCE ================= */
+    
+    /**
+     * Save all faction data to disk
+     */
+    public void saveData(File dataFolder) {
+        File factionsFile = new File(dataFolder, "factions.yml");
+        File playersFile = new File(dataFolder, "players.yml");
+        
+        try {
+            if (!dataFolder.exists()) {
+                dataFolder.mkdirs();
+            }
+            
+            // Save factions
+            YamlConfiguration factionsYaml = new YamlConfiguration();
+            for (Map.Entry<String, Faction> entry : factions.entrySet()) {
+                String key = entry.getKey();
+                Faction faction = entry.getValue();
+                ConfigurationSection factionSection = factionsYaml.createSection("factions." + key);
+                
+                factionSection.set("name", faction.getName());
+                factionSection.set("description", faction.getDescription());
+                factionSection.set("leader", faction.getLeader().toString());
+                factionSection.set("power", faction.getPower());
+                factionSection.set("balance", faction.getBalance());
+                factionSection.set("tntBank", faction.getTntBank());
+                
+                // Save roles
+                ConfigurationSection rolesSection = factionSection.createSection("roles");
+                for (Map.Entry<UUID, Role> roleEntry : faction.roles.entrySet()) {
+                    rolesSection.set(roleEntry.getKey().toString(), roleEntry.getValue().name());
+                }
+                
+                // Save claims
+                factionSection.set("claims", new ArrayList<>(faction.getClaims()));
+                
+                // Save home
+                if (faction.hasHome()) {
+                    Location home = faction.getHome();
+                    ConfigurationSection homeSection = factionSection.createSection("home");
+                    homeSection.set("world", home.getWorld().getName());
+                    homeSection.set("x", home.getX());
+                    homeSection.set("y", home.getY());
+                    homeSection.set("z", home.getZ());
+                    homeSection.set("yaw", home.getYaw());
+                    homeSection.set("pitch", home.getPitch());
+                }
+                
+                // Save allies and enemies
+                factionSection.set("allies", new ArrayList<>(faction.getAllies()));
+                factionSection.set("enemies", new ArrayList<>(faction.getEnemies()));
+                
+                // Save flags
+                ConfigurationSection flagsSection = factionSection.createSection("flags");
+                for (Map.Entry<ClaimFlag, Boolean> flagEntry : faction.getFlags().entrySet()) {
+                    flagsSection.set(flagEntry.getKey().name(), flagEntry.getValue());
+                }
+                
+                // Save spawners
+                ConfigurationSection spawnersSection = factionSection.createSection("spawners");
+                for (Map.Entry<String, Integer> spawnerEntry : faction.getSpawnersByType().entrySet()) {
+                    spawnersSection.set(spawnerEntry.getKey(), spawnerEntry.getValue());
+                }
+                
+                // Save warps
+                ConfigurationSection warpsSection = factionSection.createSection("warps");
+                for (Map.Entry<String, Location> warpEntry : faction.getWarps().entrySet()) {
+                    ConfigurationSection warpLocSection = warpsSection.createSection(warpEntry.getKey());
+                    Location warpLoc = warpEntry.getValue();
+                    warpLocSection.set("world", warpLoc.getWorld().getName());
+                    warpLocSection.set("x", warpLoc.getX());
+                    warpLocSection.set("y", warpLoc.getY());
+                    warpLocSection.set("z", warpLoc.getZ());
+                    warpLocSection.set("yaw", warpLoc.getYaw());
+                    warpLocSection.set("pitch", warpLoc.getPitch());
+                }
+                
+                // Save player titles
+                ConfigurationSection titlesSection = factionSection.createSection("titles");
+                for (Map.Entry<UUID, String> titleEntry : faction.playerTitles.entrySet()) {
+                    titlesSection.set(titleEntry.getKey().toString(), titleEntry.getValue());
+                }
+                
+                // Save upgrades
+                ConfigurationSection upgradesSection = factionSection.createSection("upgrades");
+                upgradesSection.set("maxMembers", faction.upgradeMaxMembers);
+                upgradesSection.set("spawnerMult", faction.upgradeSpawnerMult);
+                upgradesSection.set("maxWarps", faction.upgradeMaxWarps);
+                upgradesSection.set("chestSlots", faction.upgradeChestSlots);
+
+                // Save external access
+                ConfigurationSection accessSection = factionSection.createSection("access");
+                java.util.List<String> allClaims = faction.getPlayerAllClaimsAccess().stream().map(UUID::toString).toList();
+                accessSection.set("allClaims", allClaims);
+
+                ConfigurationSection permsSection = accessSection.createSection("permissions");
+                for (Map.Entry<UUID, java.util.Set<ClaimAccessPermission>> permEntry : faction.getPlayerAccessPermissions().entrySet()) {
+                    java.util.List<String> permNames = permEntry.getValue().stream().map(Enum::name).toList();
+                    permsSection.set(permEntry.getKey().toString(), permNames);
+                }
+
+                ConfigurationSection chunkAccessSection = accessSection.createSection("chunks");
+                for (Map.Entry<UUID, java.util.Set<String>> chunkEntry : faction.getPlayerChunkAccess().entrySet()) {
+                    chunkAccessSection.set(chunkEntry.getKey().toString(), new java.util.ArrayList<>(chunkEntry.getValue()));
+                }
+                
+                // Save chest inventory
+                ItemStack[] contents = faction.getChest().getContents();
+                List<Map<String, Object>> itemsList = new ArrayList<>();
+                for (int i = 0; i < contents.length; i++) {
+                    if (contents[i] != null) {
+                        Map<String, Object> itemData = new HashMap<>();
+                        itemData.put("slot", i);
+                        itemData.put("item", contents[i].serialize());
+                        itemsList.add(itemData);
+                    }
+                }
+                factionSection.set("chest", itemsList);
+            }
+            
+            factionsYaml.save(factionsFile);
+            
+            // Save player mappings
+            YamlConfiguration playersYaml = new YamlConfiguration();
+            for (Map.Entry<UUID, String> entry : playerFaction.entrySet()) {
+                playersYaml.set(entry.getKey().toString(), entry.getValue());
+            }
+            playersYaml.save(playersFile);
+            
+            Bukkit.getLogger().info("[SimpleFactions] Saved " + factions.size() + " factions and " + playerFaction.size() + " player mappings.");
+            
+        } catch (IOException e) {
+            Bukkit.getLogger().severe("[SimpleFactions] Failed to save data: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    /**
+     * Load all faction data from disk
+     */
+    public void loadData(File dataFolder) {
+        File factionsFile = new File(dataFolder, "factions.yml");
+        File playersFile = new File(dataFolder, "players.yml");
+        
+        if (!factionsFile.exists() || !playersFile.exists()) {
+            Bukkit.getLogger().info("[SimpleFactions] No existing data found, starting fresh.");
+            return;
+        }
+        
+        try {
+            // Load factions
+            YamlConfiguration factionsYaml = YamlConfiguration.loadConfiguration(factionsFile);
+            ConfigurationSection factionsSection = factionsYaml.getConfigurationSection("factions");
+            
+            if (factionsSection != null) {
+                for (String key : factionsSection.getKeys(false)) {
+                    ConfigurationSection factionSection = factionsSection.getConfigurationSection(key);
+                    if (factionSection == null) continue;
+                    
+                    String name = factionSection.getString("name");
+                    UUID leader = UUID.fromString(factionSection.getString("leader"));
+                    
+                    // Create faction
+                    Faction faction = new Faction(name, leader);
+                    faction.setDescription(factionSection.getString("description", "No description set."));
+                    faction.setPower(factionSection.getDouble("power", 0.0));
+                    faction.setBalance(factionSection.getDouble("balance", 0.0));
+                    faction.setTntBank(factionSection.getInt("tntBank", 0));
+                    
+                    // Load roles (clear default leader role first)
+                    faction.roles.clear();
+                    ConfigurationSection rolesSection = factionSection.getConfigurationSection("roles");
+                    if (rolesSection != null) {
+                        for (String uuidStr : rolesSection.getKeys(false)) {
+                            UUID uuid = UUID.fromString(uuidStr);
+                            Role role = Role.valueOf(rolesSection.getString(uuidStr));
+                            faction.roles.put(uuid, role);
+                        }
+                    }
+                    
+                    // Load claims
+                    List<String> claimsList = factionSection.getStringList("claims");
+                    faction.getClaims().addAll(claimsList);
+                    for (String claimKey : claimsList) {
+                        claims.put(claimKey, key);
+                    }
+                    
+                    // Load home
+                    ConfigurationSection homeSection = factionSection.getConfigurationSection("home");
+                    if (homeSection != null) {
+                        World world = Bukkit.getWorld(homeSection.getString("world"));
+                        if (world != null) {
+                            Location home = new Location(
+                                world,
+                                homeSection.getDouble("x"),
+                                homeSection.getDouble("y"),
+                                homeSection.getDouble("z"),
+                                (float) homeSection.getDouble("yaw"),
+                                (float) homeSection.getDouble("pitch")
+                            );
+                            faction.setHome(home);
+                        }
+                    }
+                    
+                    // Load allies and enemies
+                    faction.getAllies().addAll(factionSection.getStringList("allies"));
+                    faction.getEnemies().addAll(factionSection.getStringList("enemies"));
+                    
+                    // Load flags
+                    ConfigurationSection flagsSection = factionSection.getConfigurationSection("flags");
+                    if (flagsSection != null) {
+                        for (String flagName : flagsSection.getKeys(false)) {
+                            try {
+                                ClaimFlag flag = ClaimFlag.valueOf(flagName);
+                                faction.setFlag(flag, flagsSection.getBoolean(flagName));
+                            } catch (IllegalArgumentException ignored) {
+                            }
+                        }
+                    }
+                    
+                    // Load spawners
+                    ConfigurationSection spawnersSection = factionSection.getConfigurationSection("spawners");
+                    if (spawnersSection != null) {
+                        for (String spawnerType : spawnersSection.getKeys(false)) {
+                            faction.getSpawnersByType().put(spawnerType, spawnersSection.getInt(spawnerType));
+                        }
+                    }
+                    
+                    // Load warps
+                    ConfigurationSection warpsSection = factionSection.getConfigurationSection("warps");
+                    if (warpsSection != null) {
+                        for (String warpName : warpsSection.getKeys(false)) {
+                            ConfigurationSection warpLocSection = warpsSection.getConfigurationSection(warpName);
+                            if (warpLocSection != null) {
+                                World world = Bukkit.getWorld(warpLocSection.getString("world"));
+                                if (world != null) {
+                                    Location warpLoc = new Location(
+                                        world,
+                                        warpLocSection.getDouble("x"),
+                                        warpLocSection.getDouble("y"),
+                                        warpLocSection.getDouble("z"),
+                                        (float) warpLocSection.getDouble("yaw"),
+                                        (float) warpLocSection.getDouble("pitch")
+                                    );
+                                    faction.addWarp(warpName, warpLoc);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Load player titles
+                    ConfigurationSection titlesSection = factionSection.getConfigurationSection("titles");
+                    if (titlesSection != null) {
+                        for (String uuidStr : titlesSection.getKeys(false)) {
+                            UUID uuid = UUID.fromString(uuidStr);
+                            faction.setPlayerTitle(uuid, titlesSection.getString(uuidStr));
+                        }
+                    }
+                    
+                    // Load upgrades
+                    ConfigurationSection upgradesSection = factionSection.getConfigurationSection("upgrades");
+                    if (upgradesSection != null) {
+                        faction.upgradeMaxMembers = upgradesSection.getInt("maxMembers", 0);
+                        faction.upgradeSpawnerMult = upgradesSection.getInt("spawnerMult", 0);
+                        faction.upgradeMaxWarps = upgradesSection.getInt("maxWarps", 0);
+                        faction.upgradeChestSlots = upgradesSection.getInt("chestSlots", 0);
+                    }
+
+                    // Load external access
+                    ConfigurationSection accessSection = factionSection.getConfigurationSection("access");
+                    if (accessSection != null) {
+                        for (String uuidStr : accessSection.getStringList("allClaims")) {
+                            try {
+                                faction.getPlayerAllClaimsAccess().add(UUID.fromString(uuidStr));
+                            } catch (IllegalArgumentException ignored) {
+                            }
+                        }
+
+                        ConfigurationSection permsSection = accessSection.getConfigurationSection("permissions");
+                        if (permsSection != null) {
+                            for (String uuidStr : permsSection.getKeys(false)) {
+                                try {
+                                    UUID target = UUID.fromString(uuidStr);
+                                    java.util.Set<ClaimAccessPermission> permSet = java.util.EnumSet.noneOf(ClaimAccessPermission.class);
+                                    for (String permName : permsSection.getStringList(uuidStr)) {
+                                        try {
+                                            permSet.add(ClaimAccessPermission.valueOf(permName));
+                                        } catch (IllegalArgumentException ignored) {
+                                        }
+                                    }
+                                    if (!permSet.isEmpty()) {
+                                        faction.getPlayerAccessPermissions().put(target, permSet);
+                                    }
+                                } catch (IllegalArgumentException ignored) {
+                                }
+                            }
+                        }
+
+                        ConfigurationSection chunksSection = accessSection.getConfigurationSection("chunks");
+                        if (chunksSection != null) {
+                            for (String uuidStr : chunksSection.getKeys(false)) {
+                                try {
+                                    UUID target = UUID.fromString(uuidStr);
+                                    java.util.Set<String> chunkSet = new java.util.HashSet<>(chunksSection.getStringList(uuidStr));
+                                    if (!chunkSet.isEmpty()) {
+                                        faction.getPlayerChunkAccess().put(target, chunkSet);
+                                    }
+                                } catch (IllegalArgumentException ignored) {
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Load chest inventory
+                    List<?> chestList = factionSection.getList("chest");
+                    if (chestList != null) {
+                        for (Object obj : chestList) {
+                            if (obj instanceof Map) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> itemData = (Map<String, Object>) obj;
+                                int slot = (Integer) itemData.get("slot");
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> itemMap = (Map<String, Object>) itemData.get("item");
+                                ItemStack item = ItemStack.deserialize(itemMap);
+                                faction.getChest().setItem(slot, item);
+                            }
+                        }
+                    }
+                    
+                    factions.put(key, faction);
+                }
+            }
+            
+            // Load player mappings
+            YamlConfiguration playersYaml = YamlConfiguration.loadConfiguration(playersFile);
+            for (String uuidStr : playersYaml.getKeys(false)) {
+                UUID uuid = UUID.fromString(uuidStr);
+                String factionKey = playersYaml.getString(uuidStr);
+                playerFaction.put(uuid, factionKey);
+            }
+            
+            Bukkit.getLogger().info("[SimpleFactions] Loaded " + factions.size() + " factions and " + playerFaction.size() + " player mappings.");
+            
+        } catch (Exception e) {
+            Bukkit.getLogger().severe("[SimpleFactions] Failed to load data: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }

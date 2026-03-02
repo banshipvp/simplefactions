@@ -1,0 +1,17 @@
+# Hub location is written by /sethub under the "hub" section.
+
+hub-command-lock:
+  # Fallback world for command lock if /sethub has not been set yet.
+  world: "hub"
+
+time-lock:
+  # Hub is permanently night.
+  hub-world: "hub"
+  hub-time: 18000
+
+  # Factions worlds are permanently day.
+  faction-worlds:
+    - "faction_spawn"
+    - "faction_nether"
+    - "faction_end"
+  faction-time: 1000

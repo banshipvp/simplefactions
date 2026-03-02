@@ -18,7 +18,7 @@ public final class WandItems {
     }
 
     public static ItemStack createTntWand() {
-        ItemStack wand = new ItemStack(Material.BLAZE_ROD);
+        ItemStack wand = new ItemStack(Material.STICK);
         ItemMeta meta = wand.getItemMeta();
         meta.setDisplayName(TNT_WAND_NAME);
         meta.setLore(List.of(
