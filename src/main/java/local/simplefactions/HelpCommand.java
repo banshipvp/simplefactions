@@ -82,6 +82,8 @@ public class HelpCommand implements CommandExecutor {
             lines.add("§f/f tnt deposit [amount|all] §7- Deposit TNT");
             lines.add("§f/f tnt withdraw [amount|all] §7- Withdraw TNT");
             lines.add("§f/f tnt fill <r> <amt> <max> §7- Fill dispensers");
+            lines.add("§f/f tnt set <amount> §7- (Admin) Set your faction TNT bank");
+            lines.add("§f/f tnt set <faction> <amount> §7- (Admin) Set a faction's TNT bank");
             lines.add("§f/f tnt siphon <amt|all> [r] §7- Pull TNT from dispensers");
             lines.add(" ");
             lines.add("§6SimpleEconomy");
@@ -95,6 +97,10 @@ public class HelpCommand implements CommandExecutor {
             lines.add("§f/kits §7- Open rank kits GUI");
             lines.add("§f/spawner [open] §7- Mystery spawner");
             lines.add("§f/gkitgem give <player> <kit|random> [amount] §7- Give gems (admin)");
+            lines.add("§f/gkitlock player <player> §7- Lock player's gkits (admin)");
+            lines.add("§f/gkitlock all §7- Lock all gkits for everyone (admin)");
+            lines.add("§f/gkitunlock player <player> <kit|all> §7- Unlock a gkit for a player (admin)");
+            lines.add("§f/gkitunlock all <kit> §7- Unlock a kit for all online players (admin)");
             lines.add("§f/gkitlock all §7- Lock all gkits (admin)");
             lines.add("§f/gkitlock player <name> §7- Lock player gkits (admin)");
             lines.add(" ");

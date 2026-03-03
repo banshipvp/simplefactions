@@ -130,7 +130,9 @@ public class FCommand implements CommandExecutor, TabCompleter {
         p.sendMessage("§6/f leave");
         p.sendMessage("§6/f disband");
         p.sendMessage("§6/f chest");
-        p.sendMessage("§6/f tnt <deposit|withdraw|bal|fill|siphon|wand>");
+        p.sendMessage("§6/f tnt <deposit|withdraw|bal|fill|siphon|wand|set>");
+        p.sendMessage("§8(Admin) §6/f tnt set <amount>");
+        p.sendMessage("§8(Admin) §6/f tnt set <faction> <amount>");
         p.sendMessage("§6/f sellwand");
         p.sendMessage("§8(Admin) §6/f wand <tnt|sell|both>");
         p.sendMessage("§6/f info");
@@ -1162,6 +1164,11 @@ public class FCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
+        if (args.length >= 2 && args[1].equalsIgnoreCase("set")) {
+            tntSet(player, args);
+            return;
+        }
+
         FactionManager.Faction faction = manager.getFaction(player.getUniqueId());
         if (faction == null) {
             player.sendMessage("§cYou are not in a faction.");
@@ -1169,7 +1176,7 @@ public class FCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length < 2) {
-            player.sendMessage("§cUsage: /f tnt <deposit|withdraw|bal|fill|siphon|wand>");
+            player.sendMessage("§cUsage: /f tnt <deposit|withdraw|bal|fill|siphon|wand|set>");
             return;
         }
 
@@ -1179,8 +1186,56 @@ public class FCommand implements CommandExecutor, TabCompleter {
             case "bal", "b", "balance" -> tntBalance(player, faction);
             case "fill", "f" -> tntFill(player, faction, args);
             case "siphon", "s" -> tntSiphon(player, faction, args);
-            default -> player.sendMessage("§cUsage: /f tnt <deposit|withdraw|bal|fill|siphon|wand>");
+            default -> player.sendMessage("§cUsage: /f tnt <deposit|withdraw|bal|fill|siphon|wand|set>");
         }
+    }
+
+    private void tntSet(Player player, String[] args) {
+        if (!player.hasPermission("simplefactions.admin")) {
+            player.sendMessage("§cYou do not have permission to set faction TNT.");
+            return;
+        }
+
+        if (args.length == 3) {
+            FactionManager.Faction faction = manager.getFaction(player.getUniqueId());
+            if (faction == null) {
+                player.sendMessage("§cYou are not in a faction. Use §f/f tnt set <faction> <amount>§c.");
+                return;
+            }
+
+            Integer parsed = parsePositiveIntAllowZero(args[2]);
+            if (parsed == null) {
+                player.sendMessage("§cAmount must be a non-negative whole number.");
+                return;
+            }
+
+            faction.setTntBank(parsed);
+            player.sendMessage("§aSet faction TNT bank to §f" + parsed + "§a.");
+            tntBalance(player, faction);
+            return;
+        }
+
+        if (args.length == 4) {
+            String targetFactionName = args[2];
+            FactionManager.Faction targetFaction = manager.getFactionByName(targetFactionName);
+            if (targetFaction == null) {
+                player.sendMessage("§cFaction not found: §f" + targetFactionName);
+                return;
+            }
+
+            Integer parsed = parsePositiveIntAllowZero(args[3]);
+            if (parsed == null) {
+                player.sendMessage("§cAmount must be a non-negative whole number.");
+                return;
+            }
+
+            targetFaction.setTntBank(parsed);
+            player.sendMessage("§aSet TNT bank for §f" + targetFaction.getName() + " §ato §f" + parsed + "§a.");
+            return;
+        }
+
+        player.sendMessage("§cUsage: /f tnt set <amount>");
+        player.sendMessage("§cUsage: /f tnt set <faction> <amount>");
     }
 
     private void wandCommand(Player player, String[] args) {
@@ -1710,6 +1765,15 @@ public class FCommand implements CommandExecutor, TabCompleter {
         return String.format("%.1f", num / 1_000_000_000) + "B";
     }
 
+    private Integer parsePositiveIntAllowZero(String input) {
+        try {
+            int value = Integer.parseInt(input);
+            return value >= 0 ? value : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!(sender instanceof Player player)) {
@@ -1748,6 +1812,24 @@ public class FCommand implements CommandExecutor, TabCompleter {
             if (args.length == 3 && args[1].equalsIgnoreCase("p")) {
                 return onlinePlayerNames(args[2], player.getName());
             }
+        }
+
+        if (sub.equals("tnt") && args.length == 2) {
+            return filterByPrefix(args[1], List.of("deposit", "withdraw", "bal", "fill", "siphon", "wand", "set"));
+        }
+
+        if (sub.equals("tnt") && args.length == 3 && args[1].equalsIgnoreCase("set")) {
+            if (player.hasPermission("simplefactions.admin")) {
+                List<String> options = new ArrayList<>();
+                options.addAll(manager.getFactionNames());
+                options.addAll(List.of("0", "64", "320", "640", "1024"));
+                return filterByPrefix(args[2], options);
+            }
+            return Collections.emptyList();
+        }
+
+        if (sub.equals("tnt") && args.length == 4 && args[1].equalsIgnoreCase("set") && player.hasPermission("simplefactions.admin")) {
+            return filterByPrefix(args[3], List.of("0", "64", "320", "640", "1024"));
         }
 
         return Collections.emptyList();

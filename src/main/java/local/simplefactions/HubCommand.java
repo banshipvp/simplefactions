@@ -64,14 +64,25 @@ public class HubCommand implements CommandExecutor {
 
     public Location getHubLocation() {
         FileConfiguration config = plugin.getConfig();
-        if (!config.contains("hub.world")) return null;
-        World world = Bukkit.getWorld(config.getString("hub.world"));
-        if (world == null) return null;
-        return new Location(world,
-                config.getDouble("hub.x"),
-                config.getDouble("hub.y"),
-                config.getDouble("hub.z"),
-                (float) config.getDouble("hub.yaw"),
-                (float) config.getDouble("hub.pitch"));
+        if (config.contains("hub.world")) {
+            World world = Bukkit.getWorld(config.getString("hub.world"));
+            if (world != null) {
+                return new Location(world,
+                        config.getDouble("hub.x"),
+                        config.getDouble("hub.y"),
+                        config.getDouble("hub.z"),
+                        (float) config.getDouble("hub.yaw"),
+                        (float) config.getDouble("hub.pitch"));
+            }
+        }
+
+        String fallbackWorldName = config.getString("worlds.hub",
+                config.getString("hub-command-lock.world", "hub"));
+        World fallbackWorld = Bukkit.getWorld(fallbackWorldName);
+        if (fallbackWorld == null) {
+            return null;
+        }
+        Location spawn = fallbackWorld.getSpawnLocation();
+        return spawn.clone().add(0.5, 0.0, 0.5);
     }
 }

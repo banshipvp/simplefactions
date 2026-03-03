@@ -13,7 +13,7 @@ import java.util.Set;
 
 public class HubCommandRestrictionListener implements Listener {
 
-    private static final Set<String> ALLOWED_BASE_COMMANDS = Set.of("hub", "server", "message", "msg");
+    private static final Set<String> ALLOWED_BASE_COMMANDS = Set.of("hub", "spawn", "server", "message", "msg");
 
     private final JavaPlugin plugin;
     private final HubCommand hubCommand;
@@ -72,6 +72,6 @@ public class HubCommandRestrictionListener implements Listener {
     private void deny(PlayerCommandPreprocessEvent event) {
         event.setCancelled(true);
         event.getPlayer().sendMessage("§cThat command is disabled in Hub.");
-        event.getPlayer().sendMessage("§7Allowed: §a/hub§7, §a/server§7, §a/server factions§7, §a/message§7, §a/msg");
+        event.getPlayer().sendMessage("§7Allowed: §a/hub§7, §a/spawn§7, §a/server§7, §a/server factions§7, §a/message§7, §a/msg");
     }
 }

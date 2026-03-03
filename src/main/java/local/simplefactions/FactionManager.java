@@ -259,6 +259,15 @@ public class FactionManager {
         return factions.get(name.toLowerCase());
     }
 
+    public java.util.List<String> getFactionNames() {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (Faction faction : factions.values()) {
+            names.add(faction.getName());
+        }
+        names.sort(String::compareToIgnoreCase);
+        return names;
+    }
+
     public Faction getFactionByChunk(String world, int x, int z) {
         String key = chunkKey(world, x, z);
         String factionKey = claims.get(key);
