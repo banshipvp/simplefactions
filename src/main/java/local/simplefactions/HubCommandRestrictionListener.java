@@ -17,10 +17,12 @@ public class HubCommandRestrictionListener implements Listener {
 
     private final JavaPlugin plugin;
     private final HubCommand hubCommand;
+    private final HubQueueManager queueManager;
 
-    public HubCommandRestrictionListener(JavaPlugin plugin, HubCommand hubCommand) {
+    public HubCommandRestrictionListener(JavaPlugin plugin, HubCommand hubCommand, HubQueueManager queueManager) {
         this.plugin = plugin;
         this.hubCommand = hubCommand;
+        this.queueManager = queueManager;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -53,6 +55,19 @@ public class HubCommandRestrictionListener implements Listener {
                 return;
             }
             if (parts.length == 2 && parts[1].equalsIgnoreCase("factions")) {
+                // Route through priority queue instead of direct connect
+                event.setCancelled(true);
+                boolean added = queueManager.enqueue(player);
+                if (added) {
+                    int pos  = queueManager.getPosition(player.getUniqueId());
+                    int size = queueManager.size();
+                    player.sendMessage("\u00a7a\u2714 You joined the \u00a76Factions \u00a7aqueue!");
+                    player.sendMessage("\u00a7e  Position: \u00a7f" + pos + "\u00a7e/\u00a7f" + size);
+                } else {
+                    int pos  = queueManager.getPosition(player.getUniqueId());
+                    int size = queueManager.size();
+                    player.sendMessage("\u00a7eYou are already in the queue at position \u00a7f" + pos + "\u00a7e/\u00a7f" + size + "\u00a7e.");
+                }
                 return;
             }
             deny(event);

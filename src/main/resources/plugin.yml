@@ -2,6 +2,7 @@ name: SimpleFactions
 version: 0.1.0
 main: local.simplefactions.SimpleFactionsPlugin
 api-version: "1.21"
+softdepend: [WorldEdit, FastAsyncWorldEdit]
 commands:
   f:
     description: Factions command
@@ -24,6 +25,23 @@ commands:
     usage: /warzone <claim|unclaim|autoclaim>
     permission: simplefactions.admin
     default: op
+  showpos:
+    description: Toggle auto-showing WorldEdit selection box
+    usage: /showpos <on|off>
+    permission: simplefactions.admin
+    default: op
+  rank:
+    description: View or set a player's rank
+    usage: /rank [set <player> <tier> | <player>]
+    default: true
+  rankinfo:
+    description: View your own rank perks
+    usage: /rankinfo
+    default: true
+  queue:
+    description: Join the priority queue for the Factions server
+    usage: /queue [join|leave|list|pos]
+    default: true
 
 permissions:
   simplefactions.sethub:
@@ -31,4 +49,7 @@ permissions:
     default: op
   simplefactions.admin:
     description: Admin access to warzone management and other admin tools
+    default: op
+  simplefactions.rank:
+    description: Set player ranks via /rank set
     default: op

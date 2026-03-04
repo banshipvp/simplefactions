@@ -2,12 +2,20 @@ package local.simplefactions;
 
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.BlockState;
+import org.bukkit.block.CreatureSpawner;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.BlockStateMeta;
+import org.bukkit.inventory.meta.ItemMeta;
 
 import java.io.File;
 import java.io.IOException;
@@ -242,6 +250,8 @@ public class FactionManager {
     private final Set<UUID> factionChatPlayers = new HashSet<>();       // players in faction chat mode
     private final Set<UUID> autoMapPlayers = new HashSet<>();           // players with /f map auto enabled
     private final CoreChunkManager coreChunkManager = new CoreChunkManager(); // core chunk system
+    private final SpawnerTracker spawnerTracker = new SpawnerTracker();           // placed spawner tracking (legacy fallback)
+    private SpawnerStackManager spawnerStackManager;                               // new stacking system (set after construction)
 
     /* ================= LOOKUPS ================= */
 
@@ -567,6 +577,9 @@ public class FactionManager {
         // Destroy the core chunk if it exists
         coreChunkManager.destroyCoreChunk(f.getName());
 
+        // Remove all tracked spawners for this faction
+        spawnerTracker.removeFactionSpawners(f.getName());
+
         return true;
     }
 
@@ -646,6 +659,9 @@ public class FactionManager {
         
         // Destroy the core chunk when unclaimAll is used (the only way to remove it)
         coreChunkManager.destroyCoreChunk(faction.getName());
+
+        // Remove all tracked spawners for this faction
+        spawnerTracker.removeFactionSpawners(faction.getName());
     }
 
     public String getClaimOwner(String world, int x, int z) {
@@ -744,18 +760,128 @@ public class FactionManager {
     }
     
     /**
-     * Get all factions sorted by wealth (highest to lowest)
+     * Get all factions sorted by wealth (highest to lowest).
+     * Spawner value is taken from SpawnerStackManager (or legacy SpawnerTracker).
      */
     public java.util.List<Faction> getAllFactionsSortedByWealth() {
         return factions.values().stream()
-                .sorted((a, b) -> Double.compare(b.getWealthValue(), a.getWealthValue()))
+                .sorted((a, b) -> Double.compare(
+                        b.getBalance() + getTrackedSpawnerValue(b.getName()) + b.getPower() * 10.0,
+                        a.getBalance() + getTrackedSpawnerValue(a.getName()) + a.getPower() * 10.0))
                 .toList();
+    }
+
+    /**
+     * Returns the current time-ramped spawner value for a faction.
+     * Uses SpawnerStackManager if available, otherwise legacy SpawnerTracker.
+     */
+    public double getTrackedSpawnerValue(String factionName) {
+        if (spawnerStackManager != null) return spawnerStackManager.getTotalValueForFaction(factionName);
+        return spawnerTracker.getTotalValueForFaction(factionName);
     }
     
     /* ================= CORE CHUNK ================= */
     
     public CoreChunkManager getCoreChunkManager() {
         return coreChunkManager;
+    }
+
+    /* ================= SPAWNER TRACKER ================= */
+
+    public SpawnerTracker getSpawnerTracker() { return spawnerTracker; }
+    public SpawnerStackManager getSpawnerStackManager() { return spawnerStackManager; }
+    public void setSpawnerStackManager(SpawnerStackManager m) { this.spawnerStackManager = m; }
+
+    /**
+     * Register a spawner placed in a faction chunk.
+     * Delegates to SpawnerStackManager when available, otherwise SpawnerTracker.
+     */
+    public void onSpawnerPlaced(String world, int x, int y, int z,
+                                String entityType, String factionName) {
+        if (spawnerStackManager != null) {
+            spawnerStackManager.placeSpawner(world, x, y, z, entityType, factionName);
+        } else {
+            spawnerTracker.addSpawner(world, x, y, z, entityType, factionName);
+        }
+        Faction faction = getFactionByName(factionName);
+        if (faction != null) faction.addSpawner(entityType);
+    }
+
+    /**
+     * Unregister the LAST spawner from a stack (stack count ≥ 1 → 0).
+     * Called only when the physical block is actually destroyed (count == 1).
+     * For stacks > 1, use {@link #popSpawnerFromStack} to peel one off.
+     */
+    public PlacedSpawnerRecord onSpawnerRemoved(String world, int x, int y, int z) {
+        if (spawnerStackManager != null) {
+            SpawnerStack stack = spawnerStackManager.getStack(world, x, y, z);
+            long ts = spawnerStackManager.removeTop(world, x, y, z);
+            if (stack != null) {
+                Faction faction = getFactionByName(stack.getFactionName());
+                if (faction != null) faction.removeSpawner(stack.getEntityTypeKey());
+                // Return a synthetic record so ProtectionListener can show the value message
+                return new PlacedSpawnerRecord(
+                        SpawnerStackManager.locKey(world, x, y, z),
+                        stack.getEntityTypeKey(), stack.getFactionName(),
+                        ts > 0 ? ts : System.currentTimeMillis());
+            }
+            return null;
+        }
+        // Legacy path
+        PlacedSpawnerRecord rec = spawnerTracker.removeSpawner(world, x, y, z);
+        if (rec != null) {
+            Faction faction = getFactionByName(rec.getFactionName());
+            if (faction != null) faction.removeSpawner(rec.getEntityType());
+        }
+        return rec;
+    }
+
+    /**
+     * If the block has a stack with count > 1: removes one spawner, gives the
+     * player a matching spawner item, and informs them of the remaining count.
+     *
+     * @return {@code true} if one was popped (caller should cancel the break event)
+     */
+    public boolean popSpawnerFromStack(String world, int x, int y, int z, Player player) {
+        if (spawnerStackManager == null) return false;
+        SpawnerStack stack = spawnerStackManager.getStack(world, x, y, z);
+        if (stack == null || stack.getCount() <= 1) return false;
+
+        spawnerStackManager.removeTop(world, x, y, z);
+        Faction faction = getFactionByName(stack.getFactionName());
+        if (faction != null) faction.removeSpawner(stack.getEntityTypeKey());
+
+        // Give one spawner item of the correct type to the player
+        ItemStack spawnerItem = buildSpawnerItem(stack.getEntityTypeKey());
+        Map<Integer, ItemStack> leftover = player.getInventory().addItem(spawnerItem);
+        leftover.forEach((i, ls) -> player.getWorld().dropItemNaturally(player.getLocation(), ls));
+
+        int remaining = stack.getCount();
+        SpawnerType st = SpawnerType.fromEntityKey(stack.getEntityTypeKey());
+        String name = st != null ? st.getDisplayName() : stack.getEntityTypeKey();
+        player.sendMessage(ChatColor.YELLOW + "⚠ Removed 1 §e" + name
+                + ChatColor.YELLOW + " Spawner from the stack."
+                + ChatColor.GRAY + " (" + remaining + "/" + SpawnerStack.MAX_STACK + " remaining)");
+        return true;
+    }
+
+    /** Build a spawner ItemStack tagged with the correct entity type. */
+    public static ItemStack buildSpawnerItem(String entityTypeKey) {
+        ItemStack item = new ItemStack(Material.SPAWNER);
+        ItemMeta raw = item.getItemMeta();
+        if (raw instanceof BlockStateMeta bsm) {
+            BlockState state = bsm.getBlockState();
+            if (state instanceof CreatureSpawner cs) {
+                try { cs.setSpawnedType(EntityType.valueOf(entityTypeKey.toUpperCase())); }
+                catch (IllegalArgumentException ignored) {}
+                bsm.setBlockState(cs);
+            }
+            SpawnerType st = SpawnerType.fromEntityKey(entityTypeKey);
+            bsm.setDisplayName("\u00a76" + (st != null ? st.getDisplayName() : entityTypeKey) + " Spawner");
+            bsm.setLore(List.of("\u00a77Place in faction territory to earn value / stack"));
+            item.setItemMeta(bsm);
+        }
+        return item;
     }
     
     /* ================= DATA PERSISTENCE ================= */
@@ -880,7 +1006,27 @@ public class FactionManager {
             }
             
             factionsYaml.save(factionsFile);
-            
+
+            // Save spawner data (delegated to SpawnerStackManager when available)
+            if (spawnerStackManager != null) {
+                spawnerStackManager.saveData(dataFolder);
+            } else {
+                // Legacy fallback
+                File spawnersFile = new File(dataFolder, "spawners.yml");
+                YamlConfiguration spawnersYaml = new YamlConfiguration();
+                List<Map<String, Object>> spawnerList = new ArrayList<>();
+                for (PlacedSpawnerRecord rec : spawnerTracker.getAllRecords()) {
+                    Map<String, Object> entry2 = new HashMap<>();
+                    entry2.put("locationKey", rec.getLocationKey());
+                    entry2.put("entityType",  rec.getEntityType());
+                    entry2.put("factionName", rec.getFactionName());
+                    entry2.put("placedAt",    rec.getPlacedAt());
+                    spawnerList.add(entry2);
+                }
+                spawnersYaml.set("spawners", spawnerList);
+                spawnersYaml.save(spawnersFile);
+            }
+
             // Save player mappings
             YamlConfiguration playersYaml = new YamlConfiguration();
             for (Map.Entry<UUID, String> entry : playerFaction.entrySet()) {
@@ -888,7 +1034,8 @@ public class FactionManager {
             }
             playersYaml.save(playersFile);
             
-            Bukkit.getLogger().info("[SimpleFactions] Saved " + factions.size() + " factions and " + playerFaction.size() + " player mappings.");
+            Bukkit.getLogger().info("[SimpleFactions] Saved " + factions.size() + " factions and "
+                    + playerFaction.size() + " player mappings.");
             
         } catch (IOException e) {
             Bukkit.getLogger().severe("[SimpleFactions] Failed to save data: " + e.getMessage());
@@ -1092,6 +1239,45 @@ public class FactionManager {
                 }
             }
             
+            // Load spawner data – when SpawnerStackManager is wired in, it handles its own
+            // persistence (spawner-stacks.yml, with migration from spawners.yml).
+            // The legacy spawnerTracker path is only used as a fallback.
+            if (spawnerStackManager == null) {
+                File spawnersFile = new File(dataFolder, "spawners.yml");
+                if (spawnersFile.exists()) {
+                    YamlConfiguration spawnersYaml = YamlConfiguration.loadConfiguration(spawnersFile);
+                    List<?> spawnerList = spawnersYaml.getList("spawners");
+                    if (spawnerList != null) {
+                        for (Object obj : spawnerList) {
+                            if (obj instanceof Map) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> rec = (Map<String, Object>) obj;
+                                String locationKey = (String) rec.get("locationKey");
+                                String entityType  = (String) rec.get("entityType");
+                                String factionName = (String) rec.get("factionName");
+                                Object placedAtObj = rec.get("placedAt");
+                                if (locationKey != null && entityType != null && factionName != null && placedAtObj != null) {
+                                    long placedAt = ((Number) placedAtObj).longValue();
+                                    String[] parts = locationKey.split(":");
+                                    if (parts.length == 4) {
+                                        try {
+                                            String world2 = parts[0];
+                                            int bx = Integer.parseInt(parts[1]);
+                                            int by = Integer.parseInt(parts[2]);
+                                            int bz = Integer.parseInt(parts[3]);
+                                            spawnerTracker.addSpawner(world2, bx, by, bz, entityType, factionName, placedAt);
+                                        } catch (NumberFormatException ignored) {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Bukkit.getLogger().info("[SimpleFactions] Loaded " + spawnerTracker.getAllRecords().size() + " legacy spawner records.");
+                }
+            } else {
+                Bukkit.getLogger().info("[SimpleFactions] Spawner data will be loaded by SpawnerStackManager.");
+            }
+
             // Load player mappings
             YamlConfiguration playersYaml = YamlConfiguration.loadConfiguration(playersFile);
             for (String uuidStr : playersYaml.getKeys(false)) {

@@ -6,6 +6,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Container;
@@ -15,17 +16,20 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class FCommand implements CommandExecutor, TabCompleter {
 
     private final FactionManager manager;
     private final UpgradeGUI upgradeGUI;
     private final FactionAccessGui accessGui;
+    private final EconomyManager economyManager;
 
-    public FCommand(FactionManager manager, UpgradeGUI upgradeGUI, FactionAccessGui accessGui) {
+    public FCommand(FactionManager manager, UpgradeGUI upgradeGUI, FactionAccessGui accessGui, EconomyManager economyManager) {
         this.manager = manager;
         this.upgradeGUI = upgradeGUI;
         this.accessGui = accessGui;
+        this.economyManager = economyManager;
     }
 
     @Override
@@ -275,24 +279,38 @@ public class FCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
+        SpawnerStackManager ssm = manager.getSpawnerStackManager();
+        int spawnerCount = (ssm != null) ? ssm.getTotalCountForFaction(faction.getName()) : faction.getTotalSpawnerCount();
+        double spawnerValue = manager.getTrackedSpawnerValue(faction.getName());
+        double memberBalance = getMemberTotalBalance(faction);
+        double totalWealth = faction.getBalance() + memberBalance + spawnerValue + faction.getPower() * 10.0;
+
+        int onlineCount = countOnlineMembers(faction);
+        int totalCount = faction.getMembers().size();
+
         player.sendMessage(" ");
-        player.sendMessage("§e§l" + faction.getName() + " §8(#" + faction.getMembers().size() + ")");
-        
-        // Core Chunk - home location
+        player.sendMessage("§e§l" + faction.getName() + " §8(#" + totalCount + ")");
+
+        // Home location
         Location home = faction.getHome();
         String homeStr = (home == null) ? "§7N/A" : "§f" + home.getBlockX() + "x §7" + home.getBlockZ() + "z";
-        player.sendMessage("§7Core Chunk: " + homeStr);
-        
+        player.sendMessage("§7Home: " + homeStr);
+
         player.sendMessage("§8" + repeat("-", 40));
-        
+
         // Stats line
-        player.sendMessage("§7Power: §f" + formatNumber((long)faction.getPower()) + "§7/§f" + formatNumber(faction.getMembers().size() * 10000L) + "  §7Balance: §f$" + formatNumber((long)faction.getBalance()));
-        player.sendMessage("§7Spawners: §f" + faction.getTotalSpawnerCount() + " §8(§f$" + formatNumber((long)faction.getSpawnerValue()) + "§8)  §7Wealth: §f$" + formatNumber((long)faction.getWealthValue()));
-        
+        player.sendMessage("§7Power: §f" + formatNumber((long)faction.getPower()) + "§7/§f" + formatNumber(totalCount * 10000L) + "  §7Balance: §f$" + formatNumber((long)faction.getBalance()));
+
+        // Spawner + Wealth line with hover breakdown
+        Component spawnerLine = Component.text(
+                "§7Spawners: §f" + spawnerCount + " §8(§f$" + formatNumber((long)spawnerValue) + "§8)  §7Wealth: §f$" + formatNumber((long)totalWealth)
+        ).hoverEvent(HoverEvent.showText(buildSpawnerBreakdownHover(faction.getName(), memberBalance, spawnerValue)));
+        player.sendMessage(spawnerLine);
+
         player.sendMessage(" ");
-        player.sendMessage("§7Online: §8[§f" + countOnlineMembers(faction) + "§8/§f" + faction.getMembers().size() + "§8]§7 " + formatMemberList(faction, true));
-        player.sendMessage("§7Offline: §8[§f" + (faction.getMembers().size() - countOnlineMembers(faction)) + "§8/§f" + faction.getMembers().size() + "§8]§7 " + formatMemberList(faction, false));
-        
+        player.sendMessage(buildMemberLineComponent(faction, true, onlineCount, totalCount));
+        player.sendMessage(buildMemberLineComponent(faction, false, onlineCount, totalCount));
+
         player.sendMessage(" ");
         player.sendMessage("§7Claims: §f" + faction.getClaims().size() + "§8/§f" + faction.maxClaims());
         player.sendMessage(" ");
@@ -371,7 +389,12 @@ public class FCommand implements CommandExecutor, TabCompleter {
         player.sendMessage("§6§l" + centerText(faction.getName(), 40) + "§r");
         player.sendMessage(" ");
         player.sendMessage("§7Power: §f" + formatNumber((long)faction.getPower()) + "§7/§f" + formatNumber(faction.getMembers().size() * 10000L) + "  §7Balance: §f$" + formatNumber((long)faction.getBalance()));
-        player.sendMessage("§7Spawners: §f" + faction.getTotalSpawnerCount() + " §7(Worth: $" + formatNumber((long)faction.getSpawnerValue()) + ")  §7Wealth: §f$" + formatNumber((long)faction.getWealthValue()));
+        SpawnerStackManager _ssm = manager.getSpawnerStackManager();
+        int _spawnerCount = (_ssm != null) ? _ssm.getTotalCountForFaction(faction.getName()) : faction.getTotalSpawnerCount();
+        double _spawnerValue = manager.getTrackedSpawnerValue(faction.getName());
+        double _memberBal = getMemberTotalBalance(faction);
+        double _wealth = faction.getBalance() + _memberBal + _spawnerValue + faction.getPower() * 10.0;
+        player.sendMessage("§7Spawners: §f" + _spawnerCount + " §7(Worth: $" + formatNumber((long)_spawnerValue) + ")  §7Wealth: §f$" + formatNumber((long)_wealth));
         player.sendMessage(" ");
         player.sendMessage("§7Claims: §f" + faction.getClaims().size() + "§7/§f" + faction.maxClaims() + "  §7Members: §f" + faction.getMembers().size() + "§7/§f" + faction.getMaxMembers());
         player.sendMessage("§7Warps: §f" + faction.getWarps().size() + "§7/§f" + faction.getMaxWarps() + "  §7Chest: §f" + faction.getChestSlots() + "§7 slots");
@@ -1689,13 +1712,21 @@ public class FCommand implements CommandExecutor, TabCompleter {
     /* ================= TOP FACTIONS ================= */
 
     private void topFactions(Player player, String[] args) {
-        var allFactions = manager.getAllFactionsSortedByWealth();
-        
+        // Get all non-system factions, re-sorted with member balances included
+        List<FactionManager.Faction> allFactions = manager.getAllFactionsSortedByWealth().stream()
+                .filter(f -> !manager.isSystemFaction(f))
+                .sorted((a, b) -> {
+                    double wA = manager.getTrackedSpawnerValue(a.getName()) + a.getBalance() + getMemberTotalBalance(a) + a.getPower() * 10.0;
+                    double wB = manager.getTrackedSpawnerValue(b.getName()) + b.getBalance() + getMemberTotalBalance(b) + b.getPower() * 10.0;
+                    return Double.compare(wB, wA);
+                })
+                .collect(Collectors.toList());
+
         if (allFactions.isEmpty()) {
             player.sendMessage("§cNo factions exist yet.");
             return;
         }
-        
+
         int page = 1;
         if (args.length > 1) {
             try {
@@ -1705,56 +1736,186 @@ public class FCommand implements CommandExecutor, TabCompleter {
                 return;
             }
         }
-        
+
         int pageSize = 10;
-        int totalPages = (int) Math.ceil((double) allFactions.size() / pageSize);
-        
+        int totalPages = Math.max(1, (int) Math.ceil((double) allFactions.size() / pageSize));
+
         if (page < 1 || page > totalPages) {
             player.sendMessage("§cPage must be between 1 and " + totalPages + ".");
             return;
         }
-        
-        // Display header
+
+        // Header
         player.sendMessage("");
-        player.sendMessage("§b════════════════════════════════════════");
-        player.sendMessage("§6» §bTop Factions by Wealth §6«  §7[Page " + page + "/" + totalPages + "]");
-        player.sendMessage("§b════════════════════════════════════════");
-        
-        // Get factions for this page 
+        player.sendMessage("§8§m                                            ");
+        player.sendMessage("  §6§lFACTION LEADERBOARD  §8│  §7Page " + page + "§8/§7" + totalPages);
+        player.sendMessage("  §7Hover over a faction for wealth breakdown.");
+        player.sendMessage("§8§m                                            ");
+        player.sendMessage("");
+
         int startIndex = (page - 1) * pageSize;
-        int endIndex = Math.min(startIndex + pageSize, allFactions.size());
-        
+        int endIndex   = Math.min(startIndex + pageSize, allFactions.size());
+
         for (int i = startIndex; i < endIndex; i++) {
-            var faction = allFactions.get(i);
+            FactionManager.Faction faction = allFactions.get(i);
             int rank = i + 1;
-            double wealth = faction.getWealthValue();
-            double balance = faction.getBalance();
-            int spawners = faction.getTotalSpawnerCount();
-            int members = faction.getMembers().size();
-            
-            // Format wealth with K/M suffix
-            String wealthStr = formatNumber(wealth);
-            String balanceStr = formatNumber(balance);
-            
-            // Rank color based on position
-            String rankColor = rank <= 3 ? "§6" : rank <= 10 ? "§e" : "§7";
-            
-            player.sendMessage(rankColor + "#" + rank + " §f" + faction.getName() + 
-                    " §7| §aWealth: §e$" + wealthStr + 
-                    " §7| §aBalance: §e$" + balanceStr + 
-                    " §7| §aSpawners: §e" + spawners +
-                    " §7| §aMembers: §e" + members);
+
+            double spawnerValue  = manager.getTrackedSpawnerValue(faction.getName());
+            double memberBalance = getMemberTotalBalance(faction);
+            double totalWealth   = faction.getBalance() + memberBalance + spawnerValue + faction.getPower() * 10.0;
+
+            String medal;
+            if      (rank == 1) medal = "§6§l#1 ";
+            else if (rank == 2) medal = "§f§l#2 ";
+            else if (rank == 3) medal = "§e§l#3 ";
+            else if (rank <= 10) medal = "§e#" + rank + " ";
+            else                 medal = "§7#" + rank + " ";
+
+            String lineText = medal + "§f" + faction.getName()
+                    + " §8│ §7Wealth: §a$" + formatNumber(totalWealth)
+                    + " §8│ §7Members: §f" + faction.getMembers().size();
+
+            // Build hover breakdown
+            SpawnerStackManager ssm = manager.getSpawnerStackManager();
+            Component hover = Component.text("§6§l" + faction.getName() + "\n\n")
+                    .append(Component.text("§7Faction Balance:  §f$" + formatNumber((long)faction.getBalance()) + "\n"))
+                    .append(Component.text("§7Member Balances:  §f$" + formatNumber((long)memberBalance) + "\n"))
+                    .append(Component.text("§7Spawner Value:    §f$" + formatNumber((long)spawnerValue) + "\n"));
+
+            if (ssm != null) {
+                var breakdown = ssm.getBreakdownForFaction(faction.getName());
+                if (!breakdown.isEmpty()) {
+                    hover = hover.append(Component.text("§8   ─── Spawner Breakdown ───\n"));
+                    for (var entry : breakdown.entrySet()) {
+                        hover = hover.append(Component.text(
+                                "§8   §e" + entry.getKey() + " §8x" + (int) entry.getValue()[0]
+                                + " §7→ §f$" + formatNumber((long) entry.getValue()[1]) + "\n"
+                        ));
+                    }
+                }
+            }
+
+            hover = hover
+                    .append(Component.text("§8────────────────────\n"))
+                    .append(Component.text("§aTotal Wealth: §f$" + formatNumber((long)totalWealth)));
+
+            player.sendMessage(Component.text(lineText).hoverEvent(HoverEvent.showText(hover)));
         }
-        
-        player.sendMessage("§b════════════════════════════════════════");
-        
-        // Show page navigation
+
+        player.sendMessage("");
+        player.sendMessage("§8§m                                            ");
         if (totalPages > 1) {
-            player.sendMessage("§7Use §6/f top [page] §7to view other pages.");
+            player.sendMessage("§7  Use §6/f top <page> §7to navigate.");
         }
         player.sendMessage("");
     }
     
+    // ── Wealth / Spawner helpers ───────────────────────────────────────────────
+
+    /** Sum of all online/offline member Vault balances for a faction. */
+    private double getMemberTotalBalance(FactionManager.Faction faction) {
+        if (economyManager == null || !economyManager.isEnabled()) return 0;
+        double total = 0;
+        for (UUID member : faction.getMembers()) {
+            total += economyManager.getBalance(Bukkit.getOfflinePlayer(member));
+        }
+        return total;
+    }
+
+    /** Human-readable time since a timestamp, e.g. "3h ago", "2d ago". */
+    private String getTimeAgo(long timestamp) {
+        long diffMs = System.currentTimeMillis() - timestamp;
+        long seconds = diffMs / 1000;
+        if (seconds < 60)   return seconds + "s ago";
+        long minutes = seconds / 60;
+        if (minutes < 60)   return minutes + "m ago";
+        long hours = minutes / 60;
+        if (hours   < 24)   return hours + "h ago";
+        long days = hours / 24;
+        if (days    < 30)   return days + "d ago";
+        long weeks = days / 7;
+        if (weeks   < 4)    return weeks + "w ago";
+        return (days / 30) + "mo ago";
+    }
+
+    /** Hover component showing spawner type breakdown + balances. */
+    private Component buildSpawnerBreakdownHover(String factionName, double memberBalance, double spawnerValue) {
+        SpawnerStackManager ssm = manager.getSpawnerStackManager();
+        Component hover = Component.text("§6§lSpawner Breakdown\n\n");
+        if (ssm != null) {
+            var breakdown = ssm.getBreakdownForFaction(factionName);
+            if (breakdown.isEmpty()) {
+                hover = hover.append(Component.text("§7No spawners placed.\n"));
+            } else {
+                for (var entry : breakdown.entrySet()) {
+                    hover = hover.append(Component.text(
+                            "§e" + entry.getKey() + " §8x" + (int) entry.getValue()[0]
+                            + " §7→ §f$" + formatNumber((long) entry.getValue()[1]) + "\n"
+                    ));
+                }
+            }
+        } else {
+            hover = hover.append(Component.text("§7Spawner tracking not available.\n"));
+        }
+        hover = hover
+                .append(Component.text("§8────────────────\n"))
+                .append(Component.text("§7Spawner Value:    §f$" + formatNumber((long)spawnerValue) + "\n"))
+                .append(Component.text("§7Member Balances:  §f$" + formatNumber((long)memberBalance) + "\n"));
+        return hover;
+    }
+
+    /**
+     * Builds a Component line listing faction members (online or offline).
+     * Each member's name has a hover showing their balance and last login.
+     */
+    private Component buildMemberLineComponent(FactionManager.Faction faction, boolean showOnline,
+                                               int onlineCount, int totalCount) {
+        String header = showOnline
+                ? "§7Online: §8[§f" + onlineCount + "§8/§f" + totalCount + "§8]§7 "
+                : "§7Offline: §8[§f" + (totalCount - onlineCount) + "§8/§f" + totalCount + "§8]§7 ";
+        Component line = Component.text(header);
+
+        boolean first = true;
+        for (UUID member : faction.getMembers()) {
+            Player online = Bukkit.getPlayer(member);
+            boolean isOnline = online != null && online.isOnline();
+            if (isOnline != showOnline) continue;
+
+            if (!first) line = line.append(Component.text(" §7"));
+            first = false;
+
+            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(member);
+            String displayName = offlinePlayer.getName() != null ? offlinePlayer.getName() : "Unknown";
+            String roleStr = faction.getRole(member).toString();
+            String badge = roleStr.equals("LEADER") ? "§6✯" : roleStr.equals("OFFICER") ? "§e★" : roleStr.equals("MOD") ? "§b✦" : "";
+            String color = isOnline ? "§a" : "§c";
+
+            double bal = (economyManager != null && economyManager.isEnabled())
+                    ? economyManager.getBalance(offlinePlayer) : 0;
+
+            Component memberHover;
+            if (isOnline) {
+                memberHover = Component.text("§a" + displayName + " §8[" + roleStr + "]\n")
+                        .append(Component.text("§7Balance: §f$" + formatNumber((long) bal) + "\n"))
+                        .append(Component.text("§a● Currently Online"));
+            } else {
+                long lastPlayed = offlinePlayer.getLastPlayed();
+                String lastSeen = lastPlayed > 0 ? getTimeAgo(lastPlayed) : "Unknown";
+                memberHover = Component.text("§c" + displayName + " §8[" + roleStr + "]\n")
+                        .append(Component.text("§7Balance:   §f$" + formatNumber((long) bal) + "\n"))
+                        .append(Component.text("§7Last Seen: §f" + lastSeen));
+            }
+
+            line = line.append(
+                    Component.text(badge + color + displayName)
+                            .hoverEvent(HoverEvent.showText(memberHover))
+            );
+        }
+
+        if (first) line = line.append(Component.text("§7None"));
+        return line;
+    }
+
     /**
      * Format a number with K, M, B suffix
      */

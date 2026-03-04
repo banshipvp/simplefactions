@@ -58,11 +58,15 @@ public class WarzoneListener implements Listener {
 
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
-        // Only fire on chunk boundary
         if (event.getTo() == null) return;
+        boolean changedBlock = event.getFrom().getBlockX() != event.getTo().getBlockX()
+                || event.getFrom().getBlockY() != event.getTo().getBlockY()
+                || event.getFrom().getBlockZ() != event.getTo().getBlockZ();
+        if (!changedBlock) return;
+
         Chunk fromChunk = event.getFrom().getChunk();
         Chunk toChunk   = event.getTo().getChunk();
-        if (fromChunk.getX() == toChunk.getX() && fromChunk.getZ() == toChunk.getZ()) return;
+        boolean changedChunk = fromChunk.getX() != toChunk.getX() || fromChunk.getZ() != toChunk.getZ();
 
         Player player = event.getPlayer();
         UUID   uuid   = player.getUniqueId();
@@ -73,7 +77,7 @@ public class WarzoneListener implements Listener {
 
         // ── Auto-claim ──
         Map<UUID, WarzoneManager.WarzoneType> autoClaiming = warzoneCommand.getAutoClaiming();
-        if (autoClaiming.containsKey(uuid)) {
+        if (changedChunk && autoClaiming.containsKey(uuid)) {
             WarzoneManager.WarzoneType claimAs = autoClaiming.get(uuid);
             String currentOwner = factionManager.getClaimOwner(world, cx, cz);
             if (currentOwner == null) {
@@ -85,8 +89,7 @@ public class WarzoneListener implements Listener {
         }
 
         // ── Entry/exit titles ──
-        WarzoneManager.WarzoneType fromType = warzoneManager.getChunkType(
-                WarzoneManager.chunkKey(world, fromChunk.getX(), fromChunk.getZ()));
+        WarzoneManager.WarzoneType fromType = warzoneManager.getZoneTypeAt(event.getFrom());
         WarzoneManager.WarzoneType toType   = warzoneManager.getZoneTypeAt(event.getTo());
 
         if (fromType == toType) return; // no zone transition

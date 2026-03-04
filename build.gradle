@@ -22,11 +22,23 @@ repositories {
         name = "jitpack"
         url = "https://jitpack.io"
     }
+
+    maven {
+        name = "luckperms"
+        url = "https://oss.sonatype.org/content/repositories/snapshots/"
+    }
+
+    maven {
+        name = "enginehub"
+        url = "https://maven.enginehub.org/repo/"
+    }
 }
 
 dependencies {
     compileOnly "io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT"
     compileOnly "com.github.MilkBowl:VaultAPI:1.7.1"
+    compileOnly "net.luckperms:api:5.4"
+    compileOnly "com.sk89q.worldedit:worldedit-bukkit:7.4.0"
     compileOnly files('../SimpleShop/build/libs/SimpleShop-1.0.jar')
 }
 
