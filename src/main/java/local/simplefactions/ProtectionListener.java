@@ -20,9 +20,11 @@ import org.bukkit.event.player.PlayerInteractEvent;
 public class ProtectionListener implements Listener {
 
     private final FactionManager manager;
+    private final EconomyManager economyManager;
 
-    public ProtectionListener(FactionManager manager) {
+    public ProtectionListener(FactionManager manager, EconomyManager economyManager) {
         this.manager = manager;
+        this.economyManager = economyManager;
     }
 
     /**
@@ -63,13 +65,44 @@ public class ProtectionListener implements Listener {
         if (event.getBlock().getType() == Material.SPAWNER) {
             Block b = event.getBlock();
 
+            String spawnerType = resolveSpawnerEntityType(b);
+            double mineCost = SpawnerType.getBaseValue(spawnerType) * 0.10;
+
+            ItemStack tool = event.getPlayer().getInventory().getItemInMainHand();
+            boolean hasSilkTouch = tool != null && tool.containsEnchantment(org.bukkit.enchantments.Enchantment.SILK_TOUCH);
+            if (!hasSilkTouch) {
+                event.setCancelled(true);
+                event.getPlayer().sendMessage(ChatColor.RED + "You need Silk Touch to mine spawners.");
+                return;
+            }
+
+            if (mineCost > 0 && economyManager != null && economyManager.isEnabled()) {
+                if (!economyManager.has(event.getPlayer(), mineCost)) {
+                    event.setCancelled(true);
+                    event.getPlayer().sendMessage(ChatColor.RED + "You need $" + String.format("%,.0f", mineCost) + " to mine this spawner.");
+                    return;
+                }
+                if (!economyManager.withdrawPlayer(event.getPlayer(), mineCost)) {
+                    event.setCancelled(true);
+                    event.getPlayer().sendMessage(ChatColor.RED + "Failed to process mining payment.");
+                    return;
+                }
+                event.getPlayer().sendMessage(ChatColor.YELLOW + "Paid $" + String.format("%,.0f", mineCost) + " to mine this spawner.");
+            }
+
             // If this is a stacked spawner (count > 1): pop one off, give item, keep the block
             if (manager.popSpawnerFromStack(b.getWorld().getName(), b.getX(), b.getY(), b.getZ(), event.getPlayer())) {
                 event.setCancelled(true);
                 return;
             }
 
-            // Stack is count == 1 (or no stack manager): let the block break, clean up tracking
+            // Stack is count == 1 (or no stack manager): handle custom drop + tracking cleanup
+            event.setCancelled(true);
+            b.setType(Material.AIR);
+            ItemStack spawnerDrop = FactionManager.buildSpawnerItem(spawnerType);
+            java.util.Map<Integer, ItemStack> leftover = event.getPlayer().getInventory().addItem(spawnerDrop);
+            leftover.values().forEach(ls -> event.getPlayer().getWorld().dropItemNaturally(event.getPlayer().getLocation(), ls));
+
             PlacedSpawnerRecord removed = manager.onSpawnerRemoved(
                     b.getWorld().getName(), b.getX(), b.getY(), b.getZ());
             if (removed != null) {
@@ -81,6 +114,20 @@ public class ProtectionListener implements Listener {
                         + ChatColor.GRAY + " (was worth §e$" + String.format("%,.0f", lostValue) + ChatColor.GRAY + ")");
             }
         }
+    }
+
+    private String resolveSpawnerEntityType(Block block) {
+        BlockState state = block.getState();
+        if (state instanceof CreatureSpawner spawner && spawner.getSpawnedType() != null) {
+            return spawner.getSpawnedType().name().toLowerCase();
+        }
+        SpawnerStack stack = manager.getSpawnerStackManager() != null
+                ? manager.getSpawnerStackManager().getStack(block.getWorld().getName(), block.getX(), block.getY(), block.getZ())
+                : null;
+        if (stack != null) {
+            return stack.getEntityTypeKey();
+        }
+        return "pig";
     }
 
     @EventHandler

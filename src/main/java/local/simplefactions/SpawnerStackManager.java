@@ -75,8 +75,8 @@ public class SpawnerStackManager implements Listener {
         // Tick every 20 ticks (1 second); decrement each stack's countdown
         spawnTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tickSpawners, 20L, 20L);
 
-        // Check for cross-chunk mob merges every 2 seconds
-        mergeTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tickMobMerge, 40L, 40L);
+        // Check for cross-chunk mob merges near-instantly
+        mergeTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tickMobMerge, 5L, 5L);
     }
 
     public void stop() {

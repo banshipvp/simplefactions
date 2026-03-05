@@ -37,7 +37,7 @@ public enum SpawnerType {
     ZOMBIFIED_PIGLIN("zombified_piglin","Zombified Piglin",185_000),
 
     // ── LEGENDARY / GODLY tier ─────────────────────────────────────────────────
-    IRON_GOLEM    ("iron_golem",     "Iron Golem",      300_000),
+    IRON_GOLEM    ("iron_golem",     "Iron Golem",    2_000_000),
     WARDEN        ("warden",         "Warden",          500_000),
     GHAST         ("ghast",          "Ghast",           350_000),
     MAGMA_CUBE    ("magma_cube",     "Magma Cube",      250_000),

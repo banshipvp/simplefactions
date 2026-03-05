@@ -63,10 +63,12 @@ public class SpawnerStackListener implements Listener {
             String name = st != null ? st.getDisplayName() : stack.getEntityTypeKey();
 
             int count    = stack.getCount();
+            double mineCost = SpawnerType.getBaseValue(stack.getEntityTypeKey()) * 0.10;
 
             player.sendMessage(ChatColor.GOLD + "─── " + name + " Spawner Stack ───");
             player.sendMessage(ChatColor.YELLOW + "  Count:    §f" + count + "§e/" + SpawnerStack.MAX_STACK);
             player.sendMessage(ChatColor.YELLOW + "  Value:    §f$" + formatMoney(stack.getTotalCurrentValue()));
+            player.sendMessage(ChatColor.YELLOW + "  Mine Cost (Silk): §f$" + formatMoney(mineCost));
             player.sendMessage(ChatColor.YELLOW + "  Faction:  §f" + capitalize(stack.getFactionName()));
             if (count < SpawnerStack.MAX_STACK) {
                 player.sendMessage(ChatColor.GRAY + "  Right-click with a " + name

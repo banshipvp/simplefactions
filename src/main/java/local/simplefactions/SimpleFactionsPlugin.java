@@ -58,7 +58,7 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         getCommand("f").setExecutor(fCommand);
         getCommand("f").setTabCompleter(fCommand);
         getCommand("help").setExecutor(new HelpCommand());
-        Bukkit.getPluginManager().registerEvents(new ProtectionListener(factionManager), this);
+        Bukkit.getPluginManager().registerEvents(new ProtectionListener(factionManager, economyManager), this);
         Bukkit.getPluginManager().registerEvents(new TeleportProtectionListener(factionManager, warzoneManager), this);
         getServer().getPluginManager().registerEvents(new SpawnerStackListener(spawnerStackManager, factionManager), this);
         getServer().getPluginManager().registerEvents(new MobCombatListener(), this);
