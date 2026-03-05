@@ -52,12 +52,19 @@ public class SpawnerStackListener implements Listener {
         int cx = block.getChunk().getX(), cz = block.getChunk().getZ();
         String owner = factionManager.getClaimOwner(world, cx, cz);
 
-        // ── LEFT CLICK → show stack info ──────────────────────────────────────
+        // ── LEFT CLICK → show stack info (auto-register if untracked) ────────────
         if (action == Action.LEFT_CLICK_BLOCK) {
             SpawnerStack stack = stackManager.getStack(world, bx, by, bz);
             if (stack == null) {
-                player.sendMessage(ChatColor.GRAY + "This spawner is not tracked by SimpleFactions.");
-                return;
+                if (owner == null) {
+                    player.sendMessage(ChatColor.GRAY + "This spawner is in unclaimed territory.");
+                    return;
+                }
+                // Auto-register the spawner under the faction that owns this chunk
+                String entityKey = getEntityTypeFromBlock(block);
+                stack = stackManager.placeSpawner(world, bx, by, bz, entityKey, owner);
+                player.sendMessage(ChatColor.YELLOW + "✦ Spawner registered with faction §6"
+                        + capitalize(owner) + "§e.");
             }
             SpawnerType st = SpawnerType.fromEntityKey(stack.getEntityTypeKey());
             String name = st != null ? st.getDisplayName() : stack.getEntityTypeKey();
@@ -146,6 +153,15 @@ public class SpawnerStackListener implements Listener {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static String getEntityTypeFromBlock(Block block) {
+        BlockState state = block.getState();
+        if (state instanceof CreatureSpawner cs) {
+            EntityType et = cs.getSpawnedType();
+            if (et != null) return et.name().toLowerCase();
+        }
+        return "pig";
+    }
 
     private static String getEntityTypeFromItem(ItemStack item) {
         if (!item.hasItemMeta()) return getDefaultEntityType(item);

@@ -31,16 +31,16 @@ public enum SpawnerType {
     SKELETON      ("skeleton",       "Skeleton",        120_000),
 
     // ── ULTIMATE tier ──────────────────────────────────────────────────────────
-    CREEPER       ("creeper",        "Creeper",         150_000),
-    BLAZE         ("blaze",          "Blaze",           200_000),
+    CREEPER       ("creeper",        "Creeper",         500_000),
+    BLAZE         ("blaze",          "Blaze",           500_000),
     SLIME         ("slime",          "Slime",           175_000),
     ZOMBIFIED_PIGLIN("zombified_piglin","Zombified Piglin",185_000),
 
     // ── LEGENDARY / GODLY tier ─────────────────────────────────────────────────
     IRON_GOLEM    ("iron_golem",     "Iron Golem",    2_000_000),
-    WARDEN        ("warden",         "Warden",          500_000),
-    GHAST         ("ghast",          "Ghast",           350_000),
-    MAGMA_CUBE    ("magma_cube",     "Magma Cube",      250_000),
+    WARDEN        ("warden",         "Warden",       15_000_000),
+    GHAST         ("ghast",          "Ghast",         1_500_000),
+    MAGMA_CUBE    ("magma_cube",     "Magma Cube",    1_250_000),
     SNOWMAN       ("snowman",        "Snowman",      10_000_000);
 
     // ───────────────────────────────────────────────────────────────────────────
