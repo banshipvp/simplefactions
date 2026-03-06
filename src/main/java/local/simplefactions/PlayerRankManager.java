@@ -3,6 +3,7 @@ package local.simplefactions;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
@@ -29,6 +30,9 @@ public class PlayerRankManager {
 
     /** xpbottle last-use timestamps. */
     private final Map<UUID, Long> xpBottleCooldowns = new HashMap<>();
+
+    /** Runtime permission attachments keyed by player UUID. */
+    private final Map<UUID, PermissionAttachment> permissionAttachments = new HashMap<>();
 
     public PlayerRankManager(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -82,11 +86,20 @@ public class PlayerRankManager {
         overrides.put(playerId, rank);
         applyLuckPermsGroup(playerId, rank);
         Player p = Bukkit.getPlayer(playerId);
-        if (p != null) applyFlyPermission(p, rank);
+        if (p != null) applyPlayerState(p, rank);
     }
 
     public void setRank(Player player, PlayerRank rank) {
         setRank(player.getUniqueId(), rank);
+    }
+
+    public void applyPlayerState(Player player) {
+        applyPlayerState(player, getRank(player));
+    }
+
+    private void applyPlayerState(Player player, PlayerRank rank) {
+        applyFlyPermission(player, rank);
+        applyRankPermissions(player, rank);
     }
 
     /** Applies fly permission based on rank. Called on login/rank change. */
@@ -107,21 +120,94 @@ public class PlayerRankManager {
             um.loadUser(playerId).thenAcceptAsync(user -> {
                 if (user == null) return;
                 var data = user.data();
-                // Remove all rank group nodes first
+
+                java.util.Set<String> rankGroups = new java.util.HashSet<>();
                 for (PlayerRank r : PlayerRank.values()) {
-                    if (r == PlayerRank.DEFAULT) continue;
-                    data.remove(net.luckperms.api.node.types.InheritanceNode.builder(r.getGroupId()).build());
+                    if (r != PlayerRank.DEFAULT) {
+                        rankGroups.add(r.getGroupId().toLowerCase());
+                    }
                 }
-                // Add the new rank group
-                if (rank != PlayerRank.DEFAULT) {
-                    data.add(net.luckperms.api.node.types.InheritanceNode.builder(rank.getGroupId()).build());
+
+                // Remove all rank-group inheritance nodes (handles existing contexts as well)
+                java.util.List<net.luckperms.api.node.Node> toRemove = new java.util.ArrayList<>();
+                for (var node : data.toCollection()) {
+                    if (node instanceof net.luckperms.api.node.types.InheritanceNode inheritanceNode) {
+                        if (rankGroups.contains(inheritanceNode.getGroupName().toLowerCase())) {
+                            toRemove.add(node);
+                        }
+                    }
+                }
+                toRemove.forEach(data::remove);
+
+                // Add inherited rank groups for gameplay progression.
+                // Staff should include sovereign-and-below groups to inherit perks/permissions.
+                java.util.List<String> groupsToAdd = new java.util.ArrayList<>();
+                if (rank == PlayerRank.DEFAULT) {
+                    user.setPrimaryGroup("default");
+                } else if (rank == PlayerRank.HELPER
+                        || rank == PlayerRank.MOD
+                        || rank == PlayerRank.DEV
+                        || rank == PlayerRank.ADMIN
+                        || rank == PlayerRank.OWNER) {
+                    groupsToAdd.add(PlayerRank.SCOUT.getGroupId());
+                    groupsToAdd.add(PlayerRank.MILITANT.getGroupId());
+                    groupsToAdd.add(PlayerRank.TACTICIAN.getGroupId());
+                    groupsToAdd.add(PlayerRank.WARLORD.getGroupId());
+                    groupsToAdd.add(PlayerRank.SOVEREIGN.getGroupId());
+                    groupsToAdd.add(rank.getGroupId());
                     user.setPrimaryGroup(rank.getGroupId());
                 } else {
-                    user.setPrimaryGroup("default");
+                    groupsToAdd.add(rank.getGroupId());
+                    user.setPrimaryGroup(rank.getGroupId());
+                }
+
+                for (String groupName : groupsToAdd) {
+                    data.add(net.luckperms.api.node.types.InheritanceNode.builder(groupName).build());
                 }
                 um.saveUser(user);
             });
         } catch (Throwable ignored) {}
+    }
+
+    private void applyRankPermissions(Player player, PlayerRank rank) {
+        PermissionAttachment old = permissionAttachments.remove(player.getUniqueId());
+        if (old != null) {
+            player.removeAttachment(old);
+        }
+
+        PermissionAttachment attachment = player.addAttachment(plugin);
+
+        if (rank.hasFullStaffAccess()) {
+            attachment.setPermission("*", true);
+        }
+
+        if (rank == PlayerRank.HELPER || rank == PlayerRank.MOD || rank.hasFullStaffAccess()) {
+            attachment.setPermission("simplefactions.staff.helper", true);
+            attachment.setPermission("simplefactions.staff.tempmute", true);
+            attachment.setPermission("simplefactions.staff.unmute", true);
+            attachment.setPermission("simplefactions.staff.tempban", true);
+            attachment.setPermission("simplefactions.staff.unban", true);
+            attachment.setPermission("simplefactions.staff.warn", true);
+            attachment.setPermission("simplefactions.staff.vanish", true);
+        }
+
+        if (rank == PlayerRank.MOD || rank.hasFullStaffAccess()) {
+            attachment.setPermission("simplefactions.staff.mod", true);
+            attachment.setPermission("simplefactions.staff.mute", true);
+            attachment.setPermission("simplefactions.staff.ban", true);
+            attachment.setPermission("simplefactions.staff.tpto", true);
+            attachment.setPermission("simplefactions.staff.freeze", true);
+            attachment.setPermission("simplefactions.staff.unfreeze", true);
+        }
+
+        permissionAttachments.put(player.getUniqueId(), attachment);
+    }
+
+    public void clearPlayerRuntimeState(Player player) {
+        PermissionAttachment old = permissionAttachments.remove(player.getUniqueId());
+        if (old != null) {
+            player.removeAttachment(old);
+        }
     }
 
     // ── Convenience helpers ────────────────────────────────────────────────────

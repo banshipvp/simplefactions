@@ -3,6 +3,7 @@ package local.simplefactions;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 
 /**
@@ -109,6 +110,44 @@ public class SpawnerTracker {
         if (factionName == null) return;
         String key = factionName.toLowerCase();
         records.values().removeIf(rec -> rec.getFactionName().equals(key));
+    }
+
+    /**
+     * Remove all tracked spawners for a faction within one chunk.
+     *
+     * @return entityType -> number removed
+     */
+    public Map<String, Integer> removeFactionSpawnersInChunk(String factionName, String world, int chunkX, int chunkZ) {
+        Map<String, Integer> removedByType = new HashMap<>();
+        if (factionName == null || world == null) return removedByType;
+
+        String factionKey = factionName.toLowerCase();
+        Iterator<Map.Entry<String, PlacedSpawnerRecord>> iterator = records.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, PlacedSpawnerRecord> entry = iterator.next();
+            PlacedSpawnerRecord rec = entry.getValue();
+            if (!factionKey.equals(rec.getFactionName())) continue;
+
+            String[] parts = rec.getLocationKey().split(":");
+            if (parts.length != 4) continue;
+            if (!world.equalsIgnoreCase(parts[0])) continue;
+
+            int bx;
+            int bz;
+            try {
+                bx = Integer.parseInt(parts[1]);
+                bz = Integer.parseInt(parts[3]);
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+
+            if ((bx >> 4) != chunkX || (bz >> 4) != chunkZ) continue;
+
+            iterator.remove();
+            removedByType.merge(rec.getEntityType(), 1, Integer::sum);
+        }
+
+        return removedByType;
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

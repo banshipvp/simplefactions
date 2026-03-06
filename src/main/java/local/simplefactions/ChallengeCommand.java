@@ -34,9 +34,9 @@ public class ChallengeCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Player player)) {
             // Console: print info
-            ChallengeManager.ChallengeDefinition cur = manager.getCurrent();
-            if (cur == null) { sender.sendMessage("No active challenge."); return true; }
-            sender.sendMessage("Active: " + cur.displayName
+            List<ChallengeManager.ChallengeDefinition> active = manager.getCurrentChallenges();
+            if (active.isEmpty()) { sender.sendMessage("No active challenges."); return true; }
+            sender.sendMessage("Active: " + active.stream().map(c -> c.displayName).collect(Collectors.joining(", "))
                     + " | " + ChallengeManager.fmtTime(manager.secondsRemaining()) + " left");
             return true;
         }
@@ -60,8 +60,10 @@ public class ChallengeCommand implements CommandExecutor, TabCompleter {
         switch (sub) {
             case "skip" -> {
                 manager.adminSkip();
-                player.sendMessage("§aChallenged cycled. New challenge: §e"
-                        + manager.getCurrent().displayName);
+                String names = manager.getCurrentChallenges().stream()
+                    .map(c -> c.displayName)
+                    .collect(Collectors.joining("§7, §e"));
+                player.sendMessage("§aChallenges cycled. New set: §e" + names);
             }
             case "set" -> {
                 if (args.length < 3) {
@@ -78,7 +80,10 @@ public class ChallengeCommand implements CommandExecutor, TabCompleter {
                     return true;
                 }
                 manager.adminSet(def);
-                player.sendMessage("§aChallenge set to: §e" + def.displayName);
+                String names = manager.getCurrentChallenges().stream()
+                    .map(c -> c.displayName)
+                    .collect(Collectors.joining("§7, §e"));
+                player.sendMessage("§aChallenge set updated. Active set: §e" + names);
             }
             default -> {
                 player.sendMessage("§cUnknown admin sub: §f" + sub);
@@ -90,6 +95,7 @@ public class ChallengeCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
+        if (!sender.hasPermission(ADMIN_PERM)) return List.of();
         if (args.length == 1) return List.of("admin");
         if (args.length == 2 && args[0].equalsIgnoreCase("admin"))
             return Arrays.asList("skip", "set");

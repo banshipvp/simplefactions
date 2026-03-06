@@ -59,6 +59,7 @@ public class ShowPosCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (!sender.hasPermission("simplefactions.admin")) return Collections.emptyList();
         if (args.length != 1) return Collections.emptyList();
         String input = args[0].toLowerCase(Locale.ROOT);
         return List.of("on", "off").stream()

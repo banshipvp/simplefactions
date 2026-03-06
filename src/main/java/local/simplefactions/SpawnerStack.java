@@ -12,13 +12,13 @@ import java.util.List;
  * time-based value ramp-up (50 % → 100 % over 48 h) is applied individually.
  *
  * Spawn speed: 1 spawner = every {@link #BASE_SPAWN_INTERVAL_TICKS} ticks.
- *              N spawners = every (BASE / N) ticks, minimum {@link #MIN_SPAWN_INTERVAL_TICKS}.
+ *              N spawners = N spawn attempts every BASE ticks.
  */
 public class SpawnerStack {
 
     public static final int MAX_STACK               = 10;
     public static final int BASE_SPAWN_INTERVAL_TICKS = 400; // 20 s
-    public static final int MIN_SPAWN_INTERVAL_TICKS  =  40; //  2 s
+    public static final int MIN_SPAWN_INTERVAL_TICKS  =  40; // legacy constant (not used)
 
     private final String locationKey;  // "world:x:y:z"
     private final String entityTypeKey; // Bukkit EntityType.name().toLowerCase()
@@ -96,13 +96,19 @@ public class SpawnerStack {
     // ── Spawn timing ──────────────────────────────────────────────────────────
 
     /**
-     * Ticks between each mob spawn attempt.
-     * Scales from {@link #BASE_SPAWN_INTERVAL_TICKS} at count=1 down to
-     * {@link #MIN_SPAWN_INTERVAL_TICKS} at count={@link #MAX_STACK}.
+     * Ticks between each spawn cycle.
+     * Each cycle, this stack performs {@link #getSpawnAttemptsPerCycle()} attempts.
      */
     public int getSpawnIntervalTicks() {
-        int count = Math.max(1, placedTimes.size());
-        return Math.max(MIN_SPAWN_INTERVAL_TICKS, BASE_SPAWN_INTERVAL_TICKS / count);
+        return BASE_SPAWN_INTERVAL_TICKS;
+    }
+
+    /**
+     * Number of spawn attempts to run each cycle.
+     * This is exactly equal to stack size, so a stack of 10 acts like 10 spawners.
+     */
+    public int getSpawnAttemptsPerCycle() {
+        return Math.max(1, placedTimes.size());
     }
 
     // ── Summary ───────────────────────────────────────────────────────────────

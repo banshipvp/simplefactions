@@ -85,8 +85,8 @@ public class RankCommand implements CommandExecutor {
             return;
         }
 
-        PlayerRank newRank = PlayerRank.fromGroupId(args[2].toLowerCase());
-        if (newRank == null) {
+        PlayerRank newRank = PlayerRank.fromInput(args[2]);
+        if (newRank == PlayerRank.DEFAULT) {
             sender.sendMessage(ChatColor.RED + "Unknown rank tier: §7" + args[2]);
             sender.sendMessage(ChatColor.GRAY + "Valid tiers: " + Arrays.stream(PlayerRank.values())
                     .filter(r -> r != PlayerRank.DEFAULT)

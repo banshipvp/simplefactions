@@ -2,12 +2,17 @@ package local.simplefactions;
 
 import org.bukkit.Chunk;
 import org.bukkit.Location;
+import org.bukkit.entity.Player;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.Bukkit;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.ArrayDeque;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Stores the zone type (WARZONE / SAFEZONE) for each claimed chunk of the
@@ -67,6 +72,58 @@ public class WarzoneManager {
         return getZoneTypeAt(loc) == WarzoneType.WARZONE;
     }
 
+    public boolean hasOnlinePlayerInSameWarzoneClaim(Location anchor) {
+        return countOnlinePlayersInSameWarzoneClaim(anchor) > 0;
+    }
+
+    public int countOnlinePlayersInSameWarzoneClaim(Location anchor) {
+        if (anchor == null || anchor.getWorld() == null) {
+            return 0;
+        }
+
+        String worldName = anchor.getWorld().getName();
+        ZoneRegion region = getWarzoneRegionAt(anchor);
+        if (region != null) {
+            int count = 0;
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                Location playerLoc = player.getLocation();
+                if (playerLoc.getWorld() == null || !playerLoc.getWorld().getName().equals(worldName)) {
+                    continue;
+                }
+                if (region.contains(playerLoc.getBlockX(), playerLoc.getBlockY(), playerLoc.getBlockZ())) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        Chunk anchorChunk = anchor.getChunk();
+        String anchorKey = chunkKey(worldName, anchorChunk.getX(), anchorChunk.getZ());
+        if (getChunkType(anchorKey) != WarzoneType.WARZONE) {
+            return 0;
+        }
+
+        Set<String> connectedWarzoneChunks = getConnectedWarzoneChunkKeys(worldName, anchorChunk.getX(), anchorChunk.getZ());
+        if (connectedWarzoneChunks.isEmpty()) {
+            return 0;
+        }
+
+        int count = 0;
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            Location playerLoc = player.getLocation();
+            if (playerLoc.getWorld() == null || !playerLoc.getWorld().getName().equals(worldName)) {
+                continue;
+            }
+            Chunk playerChunk = playerLoc.getChunk();
+            String playerKey = chunkKey(worldName, playerChunk.getX(), playerChunk.getZ());
+            if (connectedWarzoneChunks.contains(playerKey)) {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
     // ── Region Zones ────────────────────────────────────────────────────────
 
     public void addRegion(String world, int minX, int minY, int minZ, int maxX, int maxY, int maxZ, WarzoneType type) {
@@ -99,6 +156,57 @@ public class WarzoneManager {
             }
         }
         return null;
+    }
+
+    private ZoneRegion getWarzoneRegionAt(Location loc) {
+        if (loc == null || loc.getWorld() == null) {
+            return null;
+        }
+
+        String world = loc.getWorld().getName();
+        int x = loc.getBlockX();
+        int y = loc.getBlockY();
+        int z = loc.getBlockZ();
+
+        for (ZoneRegion region : regions) {
+            if (region.type != WarzoneType.WARZONE) {
+                continue;
+            }
+            if (region.world.equals(world) && region.contains(x, y, z)) {
+                return region;
+            }
+        }
+
+        return null;
+    }
+
+    private Set<String> getConnectedWarzoneChunkKeys(String world, int startCx, int startCz) {
+        Set<String> connected = new HashSet<>();
+        ArrayDeque<int[]> queue = new ArrayDeque<>();
+
+        queue.add(new int[]{startCx, startCz});
+
+        while (!queue.isEmpty()) {
+            int[] node = queue.poll();
+            int cx = node[0];
+            int cz = node[1];
+            String key = chunkKey(world, cx, cz);
+
+            if (connected.contains(key)) {
+                continue;
+            }
+            if (getChunkType(key) != WarzoneType.WARZONE) {
+                continue;
+            }
+
+            connected.add(key);
+            queue.add(new int[]{cx + 1, cz});
+            queue.add(new int[]{cx - 1, cz});
+            queue.add(new int[]{cx, cz + 1});
+            queue.add(new int[]{cx, cz - 1});
+        }
+
+        return connected;
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────

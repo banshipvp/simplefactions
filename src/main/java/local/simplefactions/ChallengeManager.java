@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 /**
  * Manages the 24-hour automatic daily challenge system.
  *
- * 10 challenge definitions in POOL — one is picked at random each day.
+ * 10 challenge definitions in POOL — three are picked at random each day.
  * Scores persist across restarts via challenges.yml.
  * Top 3 can run /claim after the challenge ends.
  *
@@ -134,6 +134,7 @@ public class ChallengeManager {
     // ── Prizes ────────────────────────────────────────────────────────────────
 
     public static final long[] PRIZES = {1_000_000L, 500_000L, 250_000L};
+    private static final int ACTIVE_CHALLENGE_COUNT = 3;
 
     // ── State ─────────────────────────────────────────────────────────────────
 
@@ -141,11 +142,11 @@ public class ChallengeManager {
     private final Plugin plugin;
     private final File dataFile;
 
-    private ChallengeDefinition current;
+    private final List<ChallengeDefinition> currentChallenges = new ArrayList<>();
     private long cycleStart; // epoch seconds
 
-    /** Score values. For count-based challenges this is a simple count; for COINFLIP_WIN it's dollar amount. */
-    private final Map<UUID, Long>   scores = new LinkedHashMap<>();
+    /** challenge id -> (player -> score). */
+    private final Map<String, Map<UUID, Long>> challengeScores = new LinkedHashMap<>();
     private final Map<UUID, String> names  = new HashMap<>();
 
     private ChallengeDefinition lastChallenge;
@@ -170,7 +171,18 @@ public class ChallengeManager {
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    public ChallengeDefinition getCurrent() { return current; }
+    public ChallengeDefinition getCurrent() {
+        return currentChallenges.isEmpty() ? null : currentChallenges.get(0);
+    }
+
+    public List<ChallengeDefinition> getCurrentChallenges() {
+        return Collections.unmodifiableList(currentChallenges);
+    }
+
+    public ChallengeDefinition getChallengeById(String id) {
+        if (id == null) return null;
+        return currentChallenges.stream().filter(c -> c.id.equalsIgnoreCase(id)).findFirst().orElse(null);
+    }
 
     public long secondsRemaining() {
         long elapsed = System.currentTimeMillis() / 1000 - cycleStart;
@@ -192,10 +204,15 @@ public class ChallengeManager {
      */
     public void increment(UUID uuid, String name,
                           TrackerType type, Material material, EntityType entityType, long amount) {
-        if (current == null || current.trackerType != type) return;
-        if (current.materials   != null && material   != null && !current.materials.contains(material))     return;
-        if (current.entityTypes != null && entityType != null && !current.entityTypes.contains(entityType)) return;
-        scores.merge(uuid, amount, Long::sum);
+        if (currentChallenges.isEmpty()) return;
+
+        for (ChallengeDefinition challenge : currentChallenges) {
+            if (challenge.trackerType != type) continue;
+            if (challenge.materials != null && material != null && !challenge.materials.contains(material)) continue;
+            if (challenge.entityTypes != null && entityType != null && !challenge.entityTypes.contains(entityType)) continue;
+            leaderboardMap(challenge.id).merge(uuid, amount, Long::sum);
+        }
+
         names.putIfAbsent(uuid, name);
     }
 
@@ -210,13 +227,29 @@ public class ChallengeManager {
     }
 
     public List<Map.Entry<UUID, Long>> getLeaderboard(int limit) {
+        ChallengeDefinition current = getCurrent();
+        if (current == null) return List.of();
+        return getLeaderboard(current.id, limit);
+    }
+
+    public List<Map.Entry<UUID, Long>> getLeaderboard(String challengeId, int limit) {
+        Map<UUID, Long> scores = leaderboardMap(challengeId);
         return scores.entrySet().stream()
                 .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
                 .limit(limit)
                 .collect(Collectors.toList());
     }
 
-    public long getScore(UUID uuid)            { return scores.getOrDefault(uuid, 0L); }
+    public long getScore(UUID uuid) {
+        ChallengeDefinition current = getCurrent();
+        if (current == null) return 0L;
+        return getScore(current.id, uuid);
+    }
+
+    public long getScore(String challengeId, UUID uuid) {
+        return leaderboardMap(challengeId).getOrDefault(uuid, 0L);
+    }
+
     public Map<UUID, String> getNames()        { return Collections.unmodifiableMap(names); }
     public ChallengeDefinition getLastChallenge()            { return lastChallenge; }
     public List<Map.Entry<UUID, Long>> getLastStandings()    { return lastStandings; }
@@ -246,9 +279,22 @@ public class ChallengeManager {
     public void adminSkip() { cycle(); }
 
     public void adminSet(ChallengeDefinition def) {
-        current    = def;
+        currentChallenges.clear();
+        currentChallenges.add(def);
+        List<ChallengeDefinition> pool = new ArrayList<>(POOL);
+        pool.removeIf(d -> d.id.equals(def.id));
+        Collections.shuffle(pool);
+        for (ChallengeDefinition candidate : pool) {
+            if (currentChallenges.size() >= ACTIVE_CHALLENGE_COUNT) break;
+            currentChallenges.add(candidate);
+        }
+
         cycleStart = System.currentTimeMillis() / 1000;
-        scores.clear(); names.clear();
+        challengeScores.clear();
+        for (ChallengeDefinition c : currentChallenges) {
+            leaderboardMap(c.id);
+        }
+        names.clear();
         saveData();
         broadcastStart();
     }
@@ -256,26 +302,37 @@ public class ChallengeManager {
     // ── Cycle logic ───────────────────────────────────────────────────────────
 
     private void cycle() {
-        if (current != null) {
-            lastChallenge = current;
-            lastStandings = getLeaderboard(Integer.MAX_VALUE);
+        if (!currentChallenges.isEmpty()) {
+            lastChallenge = currentChallenges.get(0);
+            lastStandings = getLeaderboard(lastChallenge.id, Integer.MAX_VALUE);
             claimed.clear();
             notifyWinners();
         }
 
         List<ChallengeDefinition> pool = new ArrayList<>(POOL);
-        if (current != null) pool.removeIf(d -> d.id.equals(current.id));
-        current    = pool.get(new Random().nextInt(pool.size()));
+        Collections.shuffle(pool);
+
+        currentChallenges.clear();
+        for (ChallengeDefinition candidate : pool) {
+            if (currentChallenges.size() >= ACTIVE_CHALLENGE_COUNT) break;
+            currentChallenges.add(candidate);
+        }
+
         cycleStart = System.currentTimeMillis() / 1000;
-        scores.clear();
+        challengeScores.clear();
+        for (ChallengeDefinition c : currentChallenges) {
+            leaderboardMap(c.id);
+        }
         names.clear();
         saveData();
         broadcastStart();
     }
 
     private void broadcastStart() {
-        Bukkit.broadcastMessage("§6§l✦ New Daily Challenge §r§8|§e " + current.displayName);
-        Bukkit.broadcastMessage("  §7" + current.description);
+        String challengeNames = currentChallenges.stream()
+                .map(c -> "§e" + c.displayName)
+                .collect(Collectors.joining(" §8| "));
+        Bukkit.broadcastMessage("§6§l✦ New Daily Challenges §r§8| " + challengeNames);
         Bukkit.broadcastMessage("  §7Prizes: §6$1M §8/ §7$500K §8/ §c$250K §8| §e/challenges §7to view");
     }
 
@@ -297,7 +354,7 @@ public class ChallengeManager {
     // ── Scheduler ─────────────────────────────────────────────────────────────
 
     private void scheduleNext() {
-        if (current == null) {
+        if (currentChallenges.isEmpty()) {
             cycle();
             scheduleRepeating(CYCLE_SECONDS * 20L);
             return;
@@ -326,22 +383,57 @@ public class ChallengeManager {
         if (!dataFile.exists()) return;
         YamlConfiguration cfg = YamlConfiguration.loadConfiguration(dataFile);
 
-        String curId = cfg.getString("current.id");
-        if (curId != null) {
-            current    = POOL.stream().filter(d -> d.id.equals(curId)).findFirst().orElse(null);
-            cycleStart = cfg.getLong("current.start", System.currentTimeMillis() / 1000);
-        }
+        cycleStart = cfg.getLong("current.start", System.currentTimeMillis() / 1000);
 
-        var scoresSection = cfg.getConfigurationSection("current.scores");
-        if (scoresSection != null) {
-            for (String key : scoresSection.getKeys(false)) {
-                try {
-                    UUID   uuid = UUID.fromString(key);
-                    String nm   = scoresSection.getString(key + ".name", key);
-                    long   sc   = scoresSection.getLong(key + ".score", 0L);
-                    scores.put(uuid, sc);
-                    names.put(uuid, nm);
-                } catch (IllegalArgumentException ignored) {}
+        List<String> currentIds = cfg.getStringList("current.ids");
+        if (!currentIds.isEmpty()) {
+            for (String id : currentIds) {
+                ChallengeDefinition def = POOL.stream()
+                        .filter(d -> d.id.equalsIgnoreCase(id))
+                        .findFirst().orElse(null);
+                if (def != null) currentChallenges.add(def);
+            }
+
+            var allScores = cfg.getConfigurationSection("current.scores");
+            if (allScores != null) {
+                for (String challengeId : allScores.getKeys(false)) {
+                    var challengeSection = allScores.getConfigurationSection(challengeId);
+                    if (challengeSection == null) continue;
+                    Map<UUID, Long> map = leaderboardMap(challengeId);
+
+                    for (String key : challengeSection.getKeys(false)) {
+                        try {
+                            UUID uuid = UUID.fromString(key);
+                            String nm = challengeSection.getString(key + ".name", key);
+                            long sc = challengeSection.getLong(key + ".score", 0L);
+                            map.put(uuid, sc);
+                            names.put(uuid, nm);
+                        } catch (IllegalArgumentException ignored) {
+                        }
+                    }
+                }
+            }
+        } else {
+            // Backward compatibility with old single-challenge format
+            String curId = cfg.getString("current.id");
+            if (curId != null) {
+                ChallengeDefinition def = POOL.stream().filter(d -> d.id.equals(curId)).findFirst().orElse(null);
+                if (def != null) currentChallenges.add(def);
+            }
+
+            var scoresSection = cfg.getConfigurationSection("current.scores");
+            if (scoresSection != null && !currentChallenges.isEmpty()) {
+                Map<UUID, Long> map = leaderboardMap(currentChallenges.get(0).id);
+                for (String key : scoresSection.getKeys(false)) {
+                    try {
+                        UUID uuid = UUID.fromString(key);
+                        String nm = scoresSection.getString(key + ".name", key);
+                        long sc = scoresSection.getLong(key + ".score", 0L);
+                        map.put(uuid, sc);
+                        names.put(uuid, nm);
+                    } catch (IllegalArgumentException ignored) {
+                    }
+                }
             }
         }
 
@@ -369,13 +461,17 @@ public class ChallengeManager {
 
     public void saveData() {
         YamlConfiguration cfg = new YamlConfiguration();
-        if (current != null) {
-            cfg.set("current.id",    current.id);
+        if (!currentChallenges.isEmpty()) {
+            cfg.set("current.ids", currentChallenges.stream().map(c -> c.id).collect(Collectors.toList()));
             cfg.set("current.start", cycleStart);
-            for (Map.Entry<UUID, Long> e : scores.entrySet()) {
-                String base = "current.scores." + e.getKey();
-                cfg.set(base + ".name",  names.get(e.getKey()));
-                cfg.set(base + ".score", e.getValue());
+
+            for (ChallengeDefinition challenge : currentChallenges) {
+                Map<UUID, Long> scores = leaderboardMap(challenge.id);
+                for (Map.Entry<UUID, Long> e : scores.entrySet()) {
+                    String base = "current.scores." + challenge.id + "." + e.getKey();
+                    cfg.set(base + ".name", names.get(e.getKey()));
+                    cfg.set(base + ".score", e.getValue());
+                }
             }
         }
         if (lastChallenge != null) {
@@ -406,5 +502,9 @@ public class ChallengeManager {
         if (h > 0) return h + "h " + m + "m";
         if (m > 0) return m + "m " + s + "s";
         return s + "s";
+    }
+
+    private Map<UUID, Long> leaderboardMap(String challengeId) {
+        return challengeScores.computeIfAbsent(challengeId, ignored -> new LinkedHashMap<>());
     }
 }

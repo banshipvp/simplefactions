@@ -34,10 +34,80 @@ commands:
     description: View or set a player's rank
     usage: /rank [set <player> <tier> | <player>]
     default: true
+  rankset:
+    description: Set a player's rank (staff only)
+    usage: /rankset <player> <rank>
+    permission: simplefactions.rankset
+    default: op
+  staffhelp:
+    description: Show staff command reference
+    usage: /staffhelp
+    permission: simplefactions.staff.help
+    default: op
   rankinfo:
     description: View your own rank perks
     usage: /rankinfo
     default: true
+  v:
+    description: Toggle vanish mode
+    usage: /v
+    permission: simplefactions.staff.vanish
+    default: op
+  vanish:
+    description: Toggle vanish mode
+    usage: /vanish
+    permission: simplefactions.staff.vanish
+    default: op
+  tempmute:
+    description: Temporarily mute a player
+    usage: /tempmute <player> <duration> [reason]
+    permission: simplefactions.staff.tempmute
+    default: op
+  unmute:
+    description: Remove mute from a player
+    usage: /unmute <player>
+    permission: simplefactions.staff.unmute
+    default: op
+  mute:
+    description: Mute a player permanently
+    usage: /mute <player>
+    permission: simplefactions.staff.mute
+    default: op
+  tempban:
+    description: Temporarily ban a player
+    usage: /tempban <player> <duration> [reason]
+    permission: simplefactions.staff.tempban
+    default: op
+  ban:
+    description: Ban a player permanently
+    usage: /ban <player> [reason]
+    permission: simplefactions.staff.ban
+    default: op
+  unban:
+    description: Unban a player
+    usage: /unban <player>
+    permission: simplefactions.staff.unban
+    default: op
+  warn:
+    description: Warn a player
+    usage: /warn <player> <message>
+    permission: simplefactions.staff.warn
+    default: op
+  tpto:
+    description: Teleport to a target player
+    usage: /tpto <player>
+    permission: simplefactions.staff.tpto
+    default: op
+  freeze:
+    description: Toggle freeze on a player
+    usage: /freeze <player>
+    permission: simplefactions.staff.freeze
+    default: op
+  unfreeze:
+    description: Remove freeze from a player
+    usage: /unfreeze <player>
+    permission: simplefactions.staff.unfreeze
+    default: op
   queue:
     description: Join the priority queue for the Factions server
     usage: /queue [join|leave|list|pos]
@@ -63,6 +133,51 @@ commands:
     description: Claim your prize for placing top 3 in a challenge
     usage: /claim
     default: true
+  home:
+    description: Open your homes menu or teleport to a specific home
+    usage: /home [name]
+    default: true
+  homes:
+    description: Open your homes menu or teleport to a specific home
+    usage: /homes [name]
+    default: true
+  sethome:
+    description: Set a personal home location
+    usage: /sethome [name]
+    default: true
+  pv:
+    description: Open your personal vaults menu or a specific vault
+    usage: /pv [number|search <query>]
+    aliases: [pvs]
+    default: true
+  pvfilter:
+    description: Filter personal vault menu by name or icon
+    usage: /pvfilter [query]
+    default: true
+  pvsearch:
+    description: Search/filter your personal vaults
+    usage: /pvsearch [query]
+    default: true
+  pvdump:
+    description: Dump your inventory into a specific personal vault
+    usage: /pvdump <number>
+    aliases: [pddump]
+    default: true
+  warp:
+    description: Open warps menu or teleport to a warp
+    usage: /warp [name]
+    aliases: [warps]
+    default: true
+  setwarp:
+    description: Set a global warp
+    usage: /setwarp <name>
+    permission: simplefactions.warp.manage
+    default: op
+  delwarp:
+    description: Delete a global warp
+    usage: /delwarp <name>
+    permission: simplefactions.warp.manage
+    default: op
 
 permissions:
   simplefactions.sethub:
@@ -73,4 +188,72 @@ permissions:
     default: op
   simplefactions.rank:
     description: Set player ranks via /rank set
+    default: op
+  simplefactions.rankset:
+    description: Set player ranks via /rankset
+    default: op
+  simplefactions.staff.help:
+    description: View staff command help
+    default: op
+  simplefactions.staff.helper:
+    description: Helper moderation bundle
+    default: false
+    children:
+      simplefactions.staff.tempmute: true
+      simplefactions.staff.unmute: true
+      simplefactions.staff.tempban: true
+      simplefactions.staff.unban: true
+      simplefactions.staff.warn: true
+      simplefactions.staff.vanish: true
+  simplefactions.staff.mod:
+    description: Moderator moderation bundle
+    default: false
+    children:
+      simplefactions.staff.helper: true
+      simplefactions.staff.mute: true
+      simplefactions.staff.ban: true
+      simplefactions.staff.tpto: true
+      simplefactions.staff.freeze: true
+      simplefactions.staff.unfreeze: true
+  simplefactions.staff.tempmute:
+    description: Allows /tempmute
+    default: false
+  simplefactions.staff.mute:
+    description: Allows /mute
+    default: false
+  simplefactions.staff.unmute:
+    description: Allows /unmute
+    default: false
+  simplefactions.staff.tempban:
+    description: Allows /tempban
+    default: false
+  simplefactions.staff.ban:
+    description: Allows /ban
+    default: false
+  simplefactions.staff.unban:
+    description: Allows /unban
+    default: false
+  simplefactions.staff.warn:
+    description: Allows /warn
+    default: false
+  simplefactions.staff.tpto:
+    description: Allows /tpto
+    default: false
+  simplefactions.staff.freeze:
+    description: Allows /freeze
+    default: false
+  simplefactions.staff.unfreeze:
+    description: Allows /unfreeze
+    default: false
+  simplefactions.staff.vanish:
+    description: Allows /v and /vanish
+    default: false
+  simplefactions.staff.vanish.see:
+    description: Can see vanished staff
+    default: op
+  simplefactions.homes.bypasslimit:
+    description: Bypass personal home count limits
+    default: op
+  simplefactions.warp.manage:
+    description: Manage global warps
     default: op

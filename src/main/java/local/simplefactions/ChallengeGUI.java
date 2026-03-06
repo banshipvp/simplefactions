@@ -17,9 +17,9 @@ import java.util.*;
 /**
  * Handles the /challenges GUI system:
  *
- *   ─ Main view (27 slots, "§6✦ Daily Challenge"):
- *       Center slot has the challenge's theme block. Lore shows top 3 + time left.
- *       Clicking it opens the full leaderboard.
+ *   ─ Main view (27 slots, "§6✦ Daily Challenges"):
+ *       Three challenge blocks are shown at once.
+ *       Clicking one opens that challenge's full leaderboard.
  *
  *   ─ Leaderboard view (54 slots, "§6✦ Challenge Leaderboard"):
  *       Player heads for up to 28 players, with position, name, and score in lore.
@@ -27,16 +27,16 @@ import java.util.*;
  */
 public class ChallengeGUI implements Listener {
 
-    static final String TITLE_MAIN  = "§6✦ Daily Challenge";
+    static final String TITLE_MAIN  = "§6✦ Daily Challenges";
     static final String TITLE_BOARD = "§6✦ Challenge Leaderboard";
 
-    // Slot in main GUI that holds the challenge block
-    private static final int SLOT_BLOCK  = 13;
-    private static final int SLOT_TIMER  = 11;
-    private static final int SLOT_PRIZES = 15;
+    private static final int[] MAIN_CHALLENGE_SLOTS = {10, 13, 16};
+    private static final int SLOT_TIMER  = 22;
+    private static final int SLOT_PRIZES = 4;
 
     private final ChallengeManager manager;
     private final Plugin plugin;
+    private final Map<UUID, String> selectedChallengeByViewer = new HashMap<>();
 
     public ChallengeGUI(ChallengeManager manager, Plugin plugin) {
         this.manager = manager;
@@ -51,10 +51,10 @@ public class ChallengeGUI implements Listener {
         ItemStack pane = pane(Material.PURPLE_STAINED_GLASS_PANE);
         for (int i = 0; i < 27; i++) inv.setItem(i, pane);
 
-        ChallengeManager.ChallengeDefinition current = manager.getCurrent();
+        List<ChallengeManager.ChallengeDefinition> currentChallenges = manager.getCurrentChallenges();
 
-        if (current == null) {
-            inv.setItem(SLOT_BLOCK, icon(Material.BARRIER, "§cNo Active Challenge",
+        if (currentChallenges.isEmpty()) {
+            inv.setItem(13, icon(Material.BARRIER, "§cNo Active Challenges",
                     "§7Check back later!"));
             player.openInventory(inv);
             return;
@@ -64,7 +64,7 @@ public class ChallengeGUI implements Listener {
         long secsLeft = manager.secondsRemaining();
         inv.setItem(SLOT_TIMER, icon(Material.CLOCK, "§e⏱ Time Remaining",
                 "§f" + ChallengeManager.fmtTime(secsLeft),
-                "§8New challenge in " + ChallengeManager.fmtTime(secsLeft)));
+            "§8Next rotation in " + ChallengeManager.fmtTime(secsLeft)));
 
         // ── Prize breakdown ───────────────────────────────────────────────────
         inv.setItem(SLOT_PRIZES, icon(Material.GOLD_INGOT, "§6✦ Prizes",
@@ -73,29 +73,32 @@ public class ChallengeGUI implements Listener {
                 "§c#3 §f$250,000",
                 "§8Run §e/claim §8after challenge ends."));
 
-        // ── Challenge block (main clickable) ──────────────────────────────────
-        List<Map.Entry<UUID, Long>> top3  = manager.getLeaderboard(3);
-        Map<UUID, String>             names = manager.getNames();
-
-        List<String> lore = new ArrayList<>();
-        lore.add("§7" + current.description);
-        lore.add("§8─────────────────────────");
-
+        // ── Three active challenges (clickable) ───────────────────────────────
+        Map<UUID, String> names = manager.getNames();
         String[] medals = {"§6§l#1", "§7§l#2", "§c§l#3"};
-        if (top3.isEmpty()) {
-            lore.add("§7No scores yet — be the first!");
-        } else {
-            for (int i = 0; i < top3.size(); i++) {
-                String name  = names.getOrDefault(top3.get(i).getKey(), "?");
-                long   score = top3.get(i).getValue();
-                lore.add(medals[i] + " §f" + name + " §8— §e" + ChallengeManager.fmt(score));
-            }
-        }
-        lore.add("§8─────────────────────────");
-        lore.add("§aClick to view full leaderboard");
 
-        inv.setItem(SLOT_BLOCK, buildIcon(current.icon,
-                "§6§l" + current.displayName, lore));
+        for (int i = 0; i < Math.min(currentChallenges.size(), MAIN_CHALLENGE_SLOTS.length); i++) {
+            ChallengeManager.ChallengeDefinition challenge = currentChallenges.get(i);
+            List<Map.Entry<UUID, Long>> top3 = manager.getLeaderboard(challenge.id, 3);
+
+            List<String> lore = new ArrayList<>();
+            lore.add("§7" + challenge.description);
+            lore.add("§8─────────────────────────");
+            if (top3.isEmpty()) {
+                lore.add("§7No scores yet — be the first!");
+            } else {
+                for (int j = 0; j < top3.size(); j++) {
+                    String name = names.getOrDefault(top3.get(j).getKey(), "?");
+                    long score = top3.get(j).getValue();
+                    lore.add(medals[j] + " §f" + name + " §8— §e" + ChallengeManager.fmt(score));
+                }
+            }
+            lore.add("§8─────────────────────────");
+            lore.add("§aClick to view full leaderboard");
+
+            inv.setItem(MAIN_CHALLENGE_SLOTS[i], buildIcon(challenge.icon,
+                    "§6§l" + challenge.displayName, lore));
+        }
 
         player.openInventory(inv);
     }
@@ -103,9 +106,23 @@ public class ChallengeGUI implements Listener {
     // ── Open leaderboard ──────────────────────────────────────────────────────
 
     public void openLeaderboard(Player player) {
+        ChallengeManager.ChallengeDefinition current = manager.getCurrent();
+        if (current == null) {
+            openMain(player);
+            return;
+        }
+        openLeaderboard(player, current.id);
+    }
+
+    public void openLeaderboard(Player player, String challengeId) {
         Inventory inv = Bukkit.createInventory(null, 54, TITLE_BOARD);
 
-        ChallengeManager.ChallengeDefinition current = manager.getCurrent();
+        ChallengeManager.ChallengeDefinition current = manager.getChallengeById(challengeId);
+        if (current == null) {
+            openMain(player);
+            return;
+        }
+        selectedChallengeByViewer.put(player.getUniqueId(), current.id);
 
         // Header row (0-8): purple panes, challenge icon at slot 4
         ItemStack hPane = pane(Material.PURPLE_STAINED_GLASS_PANE);
@@ -131,7 +148,7 @@ public class ChallengeGUI implements Listener {
         }
 
         // Player heads: valid slots 10-16, 19-25, 28-34, 37-43  (7 per row, 4 rows = 28 total)
-        List<Map.Entry<UUID, Long>> board = manager.getLeaderboard(28);
+        List<Map.Entry<UUID, Long>> board = manager.getLeaderboard(current.id, 28);
         Map<UUID, String> names = manager.getNames();
         String[] medals = {"§6§l#1", "§7§l#2", "§c§l#3"};
 
@@ -172,9 +189,17 @@ public class ChallengeGUI implements Listener {
         ItemStack clicked = e.getCurrentItem();
         if (clicked == null || clicked.getType() == Material.AIR) return;
 
-        if (title.equals(TITLE_MAIN) && e.getRawSlot() == SLOT_BLOCK) {
-            player.closeInventory();
-            Bukkit.getScheduler().runTaskLater(plugin, () -> openLeaderboard(player), 1L);
+        if (title.equals(TITLE_MAIN)) {
+            int clickedSlot = e.getRawSlot();
+            for (int index = 0; index < MAIN_CHALLENGE_SLOTS.length; index++) {
+                if (clickedSlot != MAIN_CHALLENGE_SLOTS[index]) continue;
+                List<ChallengeManager.ChallengeDefinition> current = manager.getCurrentChallenges();
+                if (index >= current.size()) return;
+                String challengeId = current.get(index).id;
+                player.closeInventory();
+                Bukkit.getScheduler().runTaskLater(plugin, () -> openLeaderboard(player, challengeId), 1L);
+                return;
+            }
         } else if (title.equals(TITLE_BOARD) && e.getRawSlot() == 49) {
             player.closeInventory();
             Bukkit.getScheduler().runTaskLater(plugin, () -> openMain(player), 1L);

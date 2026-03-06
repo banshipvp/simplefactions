@@ -25,6 +25,20 @@ public class FCommand implements CommandExecutor, TabCompleter {
     private final FactionAccessGui accessGui;
     private final EconomyManager economyManager;
     private WarzoneManager warzoneManager;
+    private final Map<UUID, PendingClaimConfirmation> pendingClaimConfirmations = new HashMap<>();
+    private static final long CLAIM_CONFIRM_WINDOW_MS = 20_000L;
+
+    private static class PendingClaimConfirmation {
+        final String key;
+        final long cost;
+        final long expiresAt;
+
+        PendingClaimConfirmation(String key, long cost, long expiresAt) {
+            this.key = key;
+            this.cost = cost;
+            this.expiresAt = expiresAt;
+        }
+    }
 
     public FCommand(FactionManager manager, UpgradeGUI upgradeGUI, FactionAccessGui accessGui, EconomyManager economyManager) {
         this.manager = manager;
@@ -703,27 +717,79 @@ public class FCommand implements CommandExecutor, TabCompleter {
             }
 
             radius = Math.min(radius, 5);
-
-            // Pre-calculate total warzone border cost across all chunks to be claimed
-            long totalCost = 0;
             boolean firstClaimForFaction = faction.getClaims().isEmpty();
+
+            if (firstClaimForFaction) {
+                if (isWarzoneChunk(world.getName(), center.getX(), center.getZ())) {
+                    player.sendMessage("§cYou cannot claim inside the warzone.");
+                    return;
+                }
+                FactionManager.Faction centerOwner = manager.getFactionByChunk(world.getName(), center.getX(), center.getZ());
+                if (centerOwner != null) {
+                    player.sendMessage("§cCannot claim radius here because your core chunk must be your current chunk, and it is already claimed.");
+                    return;
+                }
+            }
+
+            List<int[]> claimTargets = new ArrayList<>();
+            int blockedWarzone = 0;
+
+            if (firstClaimForFaction) {
+                claimTargets.add(new int[]{center.getX(), center.getZ()});
+            }
+
             for (int x = -radius; x <= radius; x++) {
                 for (int z = -radius; z <= radius; z++) {
                     if (firstClaimForFaction && x == 0 && z == 0) continue;
-                    int cx = center.getX() + x, cz = center.getZ() + z;
-                    if (manager.getFactionByChunk(world.getName(), cx, cz) == null) {
-                        totalCost += warzoneBorderCost(world.getName(), cx, cz);
+                    int cx = center.getX() + x;
+                    int cz = center.getZ() + z;
+                    if (isWarzoneChunk(world.getName(), cx, cz)) {
+                        blockedWarzone++;
+                        continue;
                     }
-                }
-            }
-            if (!firstClaimForFaction || !faction.getClaims().isEmpty()) {
-                // also count center if it would be claimed normally
-                if (!firstClaimForFaction) {
-                    totalCost += warzoneBorderCost(world.getName(), center.getX(), center.getZ());
+                    if (manager.getFactionByChunk(world.getName(), cx, cz) != null) continue;
+                    claimTargets.add(new int[]{cx, cz});
                 }
             }
 
+            int availableClaimSlots = Math.max(0, faction.maxClaims() - faction.getClaims().size());
+            if (availableClaimSlots <= 0) {
+                player.sendMessage("§cYour faction has reached max claims.");
+                return;
+            }
+
+            if (claimTargets.size() > availableClaimSlots) {
+                claimTargets = new ArrayList<>(claimTargets.subList(0, availableClaimSlots));
+            }
+
+            if (claimTargets.isEmpty()) {
+                if (blockedWarzone > 0) {
+                    player.sendMessage("§cYou cannot claim inside warzone chunks.");
+                } else {
+                    player.sendMessage("§cNo claimable chunks found in that radius.");
+                }
+                return;
+            }
+
+            long totalCost = 0L;
+            Map<String, Long> borderCostByChunk = new HashMap<>();
+            for (int[] target : claimTargets) {
+                long chunkCost = warzoneBorderCost(world.getName(), target[0], target[1]);
+                totalCost += chunkCost;
+                borderCostByChunk.put(target[0] + ":" + target[1], chunkCost);
+            }
+
             if (totalCost > 0) {
+                String confirmKey = "radius:" + world.getName() + ":" + center.getX() + ":" + center.getZ() + ":" + radius + ":" + claimTargets.size();
+                if (!isClaimConfirmed(player, confirmKey, totalCost)) {
+                    pendingClaimConfirmations.put(player.getUniqueId(),
+                            new PendingClaimConfirmation(confirmKey, totalCost, System.currentTimeMillis() + CLAIM_CONFIRM_WINDOW_MS));
+                    player.sendMessage("§6⚠ Claim confirmation required.");
+                    player.sendMessage("§eThis radius claim costs §6$" + formatMoney(totalCost) + "§e due to warzone-border pricing.");
+                    player.sendMessage("§eRun §f/f claim radius " + radius + " §eagain within 20 seconds to confirm.");
+                    return;
+                }
+
                 if (!economyManager.isEnabled()) {
                     player.sendMessage("§cSome chunks in this radius border the warzone and require $" + formatMoney(totalCost) + " but economy is not available.");
                     return;
@@ -737,42 +803,58 @@ public class FCommand implements CommandExecutor, TabCompleter {
             }
 
             int claimed = 0;
+            long usedCost = 0L;
 
-            if (firstClaimForFaction) {
-                FactionManager.Faction centerOwner = manager.getFactionByChunk(world.getName(), center.getX(), center.getZ());
-                if (centerOwner != null) {
-                    player.sendMessage("§cCannot claim radius here because your core chunk must be your current chunk, and it is already claimed.");
-                    return;
-                }
-
-                if (manager.claimChunk(faction, world.getName(), center.getX(), center.getZ())) {
+            for (int[] target : claimTargets) {
+                if (manager.claimChunk(faction, world.getName(), target[0], target[1])) {
                     claimed++;
-                } else {
-                    player.sendMessage("§cFailed to establish your core chunk at your current location.");
-                    return;
+                    usedCost += borderCostByChunk.getOrDefault(target[0] + ":" + target[1], 0L);
                 }
             }
 
-            for (int x = -radius; x <= radius; x++) {
-                for (int z = -radius; z <= radius; z++) {
-                    if (firstClaimForFaction && x == 0 && z == 0) continue;
-                    if (manager.getFactionByChunk(world.getName(),
-                            center.getX() + x, center.getZ() + z) == null) {
-                        if (manager.claimChunk(faction, world.getName(),
-                                center.getX() + x, center.getZ() + z)) {
-                            claimed++;
-                        }
-                    }
+            if (totalCost > usedCost) {
+                long refund = totalCost - usedCost;
+                if (refund > 0) {
+                    economyManager.depositPlayer(player, refund);
+                    player.sendMessage("§eRefunded §6$" + formatMoney(refund) + " §efor chunks that could not be claimed.");
                 }
             }
 
             player.sendMessage("§aClaimed §f" + claimed + "§a chunks.");
+            if (blockedWarzone > 0) {
+                player.sendMessage("§eSkipped §f" + blockedWarzone + "§e warzone chunks (cannot be claimed).");
+            }
             return;
         }
 
         // ── Single chunk claim ────────────────────────────────────────────────
+        if (isWarzoneChunk(world.getName(), center.getX(), center.getZ())) {
+            player.sendMessage("§cYou cannot claim inside the warzone.");
+            return;
+        }
+
+        if (manager.getFactionByChunk(world.getName(), center.getX(), center.getZ()) != null) {
+            player.sendMessage("§cCannot claim here.");
+            return;
+        }
+
+        if (faction.getClaims().size() >= faction.maxClaims()) {
+            player.sendMessage("§cYour faction has reached max claims.");
+            return;
+        }
+
         long cost = warzoneBorderCost(world.getName(), center.getX(), center.getZ());
         if (cost > 0) {
+            String confirmKey = "single:" + world.getName() + ":" + center.getX() + ":" + center.getZ();
+            if (!isClaimConfirmed(player, confirmKey, cost)) {
+                pendingClaimConfirmations.put(player.getUniqueId(),
+                        new PendingClaimConfirmation(confirmKey, cost, System.currentTimeMillis() + CLAIM_CONFIRM_WINDOW_MS));
+                player.sendMessage("§6⚠ Claim confirmation required.");
+                player.sendMessage("§eThis chunk borders warzone and costs §6$" + formatMoney(cost) + "§e.");
+                player.sendMessage("§eRun §f/f claim §eagain within 20 seconds to confirm.");
+                return;
+            }
+
             if (!economyManager.isEnabled()) {
                 player.sendMessage("§cThis chunk borders the warzone and costs §e$" + formatMoney(cost) + "§c to claim, but economy is unavailable.");
                 return;
@@ -788,8 +870,28 @@ public class FCommand implements CommandExecutor, TabCompleter {
         if (manager.claimChunk(faction, world.getName(), center.getX(), center.getZ())) {
             player.sendMessage("§aChunk claimed.");
         } else {
+            if (cost > 0) {
+                economyManager.depositPlayer(player, cost);
+                player.sendMessage("§eClaim failed, refunded §6$" + formatMoney(cost) + "§e.");
+            }
             player.sendMessage("§cCannot claim here.");
         }
+    }
+
+    private boolean isClaimConfirmed(Player player, String key, long cost) {
+        PendingClaimConfirmation pending = pendingClaimConfirmations.get(player.getUniqueId());
+        if (pending == null) return false;
+        if (System.currentTimeMillis() > pending.expiresAt) {
+            pendingClaimConfirmations.remove(player.getUniqueId());
+            return false;
+        }
+        if (!pending.key.equals(key) || pending.cost != cost) return false;
+        pendingClaimConfirmations.remove(player.getUniqueId());
+        return true;
+    }
+
+    private boolean isWarzoneChunk(String worldName, int chunkX, int chunkZ) {
+        return warzoneManager != null && warzoneManager.isWarzoneChunk(worldName, chunkX, chunkZ);
     }
 
     private static String formatMoney(long amount) {
@@ -2041,7 +2143,11 @@ public class FCommand implements CommandExecutor, TabCompleter {
         }
 
         if (sub.equals("tnt") && args.length == 2) {
-            return filterByPrefix(args[1], List.of("deposit", "withdraw", "bal", "fill", "siphon", "wand", "set"));
+            List<String> base = new ArrayList<>(List.of("deposit", "withdraw", "bal", "fill", "siphon", "wand"));
+            if (player.hasPermission("simplefactions.admin")) {
+                base.add("set");
+            }
+            return filterByPrefix(args[1], base);
         }
 
         if (sub.equals("tnt") && args.length == 3 && args[1].equalsIgnoreCase("set")) {

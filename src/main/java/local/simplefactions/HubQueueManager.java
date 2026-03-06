@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Manages a rank-priority queue for the hub → factions server join.
@@ -47,6 +48,7 @@ public class HubQueueManager implements Listener, PluginMessageListener {
     private final Map<UUID, Long> queuedPlayers = new LinkedHashMap<>();
 
     private BukkitTask processTask;
+    private Function<Player, Boolean> transferHandler;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -73,6 +75,14 @@ public class HubQueueManager implements Listener, PluginMessageListener {
         }
         plugin.getServer().getMessenger().unregisterOutgoingPluginChannel(plugin, BUNGEE_CHANNEL);
         plugin.getServer().getMessenger().unregisterIncomingPluginChannel(plugin, BUNGEE_CHANNEL, this);
+    }
+
+    /**
+     * Optional transfer handler override.
+     * When set, queue processing will call this instead of BungeeCord Connect.
+     */
+    public void setTransferHandler(Function<Player, Boolean> transferHandler) {
+        this.transferHandler = transferHandler;
     }
 
     // ── Queue management ──────────────────────────────────────────────────────
@@ -138,10 +148,27 @@ public class HubQueueManager implements Listener, PluginMessageListener {
                 continue;
             }
 
-            // Send via BungeeCord
-            if (sendToServer(player)) {
+            boolean transferred;
+            if (transferHandler != null) {
+                try {
+                    transferred = Boolean.TRUE.equals(transferHandler.apply(player));
+                } catch (Exception ex) {
+                    plugin.getLogger().warning("[HubQueue] transfer handler failed for "
+                            + player.getName() + ": " + ex.getMessage());
+                    transferred = false;
+                }
+            } else {
+                // Send via BungeeCord
+                transferred = sendToServer(player);
+            }
+
+            if (transferred) {
                 queuedPlayers.remove(id);
-                player.sendMessage(ChatColor.GREEN + "✔ Connecting you to §6Factions§a...");
+                if (transferHandler != null) {
+                    player.sendMessage(ChatColor.GREEN + "✔ Sending you to §6Faction Server§a...");
+                } else {
+                    player.sendMessage(ChatColor.GREEN + "✔ Connecting you to §6Factions§a...");
+                }
                 sent++;
             }
         }

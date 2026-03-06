@@ -18,17 +18,24 @@ public class HubCommandRestrictionListener implements Listener {
     private final JavaPlugin plugin;
     private final HubCommand hubCommand;
     private final HubQueueManager queueManager;
+    private final PlayerRankManager rankManager;
 
-    public HubCommandRestrictionListener(JavaPlugin plugin, HubCommand hubCommand, HubQueueManager queueManager) {
+    public HubCommandRestrictionListener(JavaPlugin plugin, HubCommand hubCommand, HubQueueManager queueManager,
+                                         PlayerRankManager rankManager) {
         this.plugin = plugin;
         this.hubCommand = hubCommand;
         this.queueManager = queueManager;
+        this.rankManager = rankManager;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
         Player player = event.getPlayer();
         if (!isInHubWorld(player)) {
+            return;
+        }
+
+        if (hasHubCommandBypass(player)) {
             return;
         }
 
@@ -88,5 +95,11 @@ public class HubCommandRestrictionListener implements Listener {
         event.setCancelled(true);
         event.getPlayer().sendMessage("§cThat command is disabled in Hub.");
         event.getPlayer().sendMessage("§7Allowed: §a/hub§7, §a/spawn§7, §a/server§7, §a/server factions§7, §a/message§7, §a/msg");
+    }
+
+    private boolean hasHubCommandBypass(Player player) {
+        if (player.isOp()) return true;
+        PlayerRank rank = rankManager.getRank(player);
+        return rank.hasFullStaffAccess();
     }
 }

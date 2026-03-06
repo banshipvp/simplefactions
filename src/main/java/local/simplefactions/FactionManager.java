@@ -578,6 +578,9 @@ public class FactionManager {
         coreChunkManager.destroyCoreChunk(f.getName());
 
         // Remove all tracked spawners for this faction
+        if (spawnerStackManager != null) {
+            spawnerStackManager.removeFactionStacks(f.getName());
+        }
         spawnerTracker.removeFactionSpawners(f.getName());
 
         return true;
@@ -609,6 +612,8 @@ public class FactionManager {
 
         if (!faction.getClaims().contains(key)) return false;
         if (isCoreChunk(faction, world, x, z)) return false;
+
+        removeTrackedSpawnersInChunk(faction, world, x, z);
 
         faction.getClaims().remove(key);
         claims.remove(key);
@@ -653,6 +658,10 @@ public class FactionManager {
 
     public void unclaimAll(Faction faction) {
         for (String key : new HashSet<>(faction.getClaims())) {
+            ParsedChunkKey parsed = parseChunkKey(key);
+            if (parsed != null) {
+                removeTrackedSpawnersInChunk(faction, parsed.world, parsed.x, parsed.z);
+            }
             claims.remove(key);
         }
         faction.getClaims().clear();
@@ -660,8 +669,12 @@ public class FactionManager {
         // Destroy the core chunk when unclaimAll is used (the only way to remove it)
         coreChunkManager.destroyCoreChunk(faction.getName());
 
-        // Remove all tracked spawners for this faction
+        // Remove any stragglers not attached to currently-claimed chunks
+        if (spawnerStackManager != null) {
+            decrementSpawnerTypeCounts(faction, spawnerStackManager.removeFactionStacks(faction.getName()));
+        }
         spawnerTracker.removeFactionSpawners(faction.getName());
+        faction.getSpawnersByType().clear();
     }
 
     public String getClaimOwner(String world, int x, int z) {
@@ -757,6 +770,52 @@ public class FactionManager {
 
     private String chunkKey(String world, int x, int z) {
         return world + ":" + x + ":" + z;
+    }
+
+    private void removeTrackedSpawnersInChunk(Faction faction, String world, int chunkX, int chunkZ) {
+        if (faction == null || world == null) return;
+
+        if (spawnerStackManager != null) {
+            Map<String, Integer> removed = spawnerStackManager.removeFactionStacksInChunk(faction.getName(), world, chunkX, chunkZ);
+            decrementSpawnerTypeCounts(faction, removed);
+        } else {
+            Map<String, Integer> removed = spawnerTracker.removeFactionSpawnersInChunk(faction.getName(), world, chunkX, chunkZ);
+            decrementSpawnerTypeCounts(faction, removed);
+        }
+    }
+
+    private void decrementSpawnerTypeCounts(Faction faction, Map<String, Integer> removedByType) {
+        if (faction == null || removedByType == null || removedByType.isEmpty()) return;
+        for (Map.Entry<String, Integer> entry : removedByType.entrySet()) {
+            String type = entry.getKey();
+            int amount = Math.max(0, entry.getValue());
+            for (int i = 0; i < amount; i++) {
+                faction.removeSpawner(type);
+            }
+        }
+    }
+
+    private ParsedChunkKey parseChunkKey(String key) {
+        if (key == null) return null;
+        String[] parts = key.split(":");
+        if (parts.length != 3) return null;
+        try {
+            return new ParsedChunkKey(parts[0], Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static class ParsedChunkKey {
+        final String world;
+        final int x;
+        final int z;
+
+        ParsedChunkKey(String world, int x, int z) {
+            this.world = world;
+            this.x = x;
+            this.z = z;
+        }
     }
     
     /**

@@ -161,6 +161,69 @@ public class SpawnerStackManager implements Listener {
         return stacks.remove(key);
     }
 
+    /**
+     * Remove all stacked spawners owned by a faction inside a specific chunk.
+     *
+     * @return entityType -> number of removed spawners
+     */
+    public Map<String, Integer> removeFactionStacksInChunk(String factionName, String world, int chunkX, int chunkZ) {
+        Map<String, Integer> removedByType = new HashMap<>();
+        if (factionName == null || world == null) return removedByType;
+
+        String factionKey = factionName.toLowerCase(Locale.ROOT);
+        Iterator<Map.Entry<String, SpawnerStack>> iterator = stacks.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, SpawnerStack> entry = iterator.next();
+            SpawnerStack stack = entry.getValue();
+            if (!factionKey.equals(stack.getFactionName())) continue;
+
+            String[] parts = stack.getLocationKey().split(":");
+            if (parts.length != 4) continue;
+            if (!world.equalsIgnoreCase(parts[0])) continue;
+
+            int bx;
+            int bz;
+            try {
+                bx = Integer.parseInt(parts[1]);
+                bz = Integer.parseInt(parts[3]);
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+
+            if ((bx >> 4) != chunkX || (bz >> 4) != chunkZ) continue;
+
+            iterator.remove();
+            spawnCountdowns.remove(entry.getKey());
+            removedByType.merge(stack.getEntityTypeKey(), stack.getCount(), Integer::sum);
+        }
+
+        return removedByType;
+    }
+
+    /**
+     * Remove all stacked spawners owned by a faction across all chunks.
+     *
+     * @return entityType -> number of removed spawners
+     */
+    public Map<String, Integer> removeFactionStacks(String factionName) {
+        Map<String, Integer> removedByType = new HashMap<>();
+        if (factionName == null) return removedByType;
+
+        String factionKey = factionName.toLowerCase(Locale.ROOT);
+        Iterator<Map.Entry<String, SpawnerStack>> iterator = stacks.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, SpawnerStack> entry = iterator.next();
+            SpawnerStack stack = entry.getValue();
+            if (!factionKey.equals(stack.getFactionName())) continue;
+
+            iterator.remove();
+            spawnCountdowns.remove(entry.getKey());
+            removedByType.merge(stack.getEntityTypeKey(), stack.getCount(), Integer::sum);
+        }
+
+        return removedByType;
+    }
+
     // ── Value calculation ─────────────────────────────────────────────────────
 
     public double getTotalValueForFaction(String factionName) {
@@ -255,13 +318,14 @@ public class SpawnerStackManager implements Listener {
         } catch (IllegalArgumentException e) { return; }
 
         String chunkKey = chunkMobKey(world.getName(), bx >> 4, bz >> 4, stack.getEntityTypeKey());
+        int spawnAmount = stack.getSpawnAttemptsPerCycle();
         UUID leaderId = chunkMobLeader.get(chunkKey);
 
         if (leaderId != null) {
             Entity leader = Bukkit.getEntity(leaderId);
             if (leader != null && leader.isValid() && !leader.isDead()) {
                 // Merge into existing stack
-                int count = mobStackCount.getOrDefault(leaderId, 1) + 1;
+                int count = mobStackCount.getOrDefault(leaderId, 1) + spawnAmount;
                 mobStackCount.put(leaderId, count);
                 updateMobNametag(leader, stack.getEntityTypeKey(), count);
                 return;
@@ -286,13 +350,17 @@ public class SpawnerStackManager implements Listener {
         PersistentDataContainer pdc = mob.getPersistentDataContainer();
         pdc.set(KEY_STACK_MOB,   PersistentDataType.BYTE,    (byte) 1);
         pdc.set(KEY_STACK_TYPE,  PersistentDataType.STRING,  stack.getEntityTypeKey());
-        pdc.set(KEY_STACK_COUNT, PersistentDataType.INTEGER, 1);
+        pdc.set(KEY_STACK_COUNT, PersistentDataType.INTEGER, spawnAmount);
 
-        updateMobNametag(mob, stack.getEntityTypeKey(), 1);
+        if (mob instanceof Ghast ghast) {
+            ghast.setAI(false);
+        }
+
+        updateMobNametag(mob, stack.getEntityTypeKey(), spawnAmount);
 
         chunkMobLeader.put(chunkKey, mob.getUniqueId());
         mobToChunkKey.put(mob.getUniqueId(), chunkKey);
-        mobStackCount.put(mob.getUniqueId(), 1);
+        mobStackCount.put(mob.getUniqueId(), spawnAmount);
     }
 
     private void updateMobNametag(Entity mob, String entityTypeKey, int count) {
@@ -391,6 +459,9 @@ public class SpawnerStackManager implements Listener {
                         rpdc.set(KEY_STACK_MOB,   PersistentDataType.BYTE,    (byte) 1);
                         rpdc.set(KEY_STACK_TYPE,  PersistentDataType.STRING,  rawType);
                         rpdc.set(KEY_STACK_COUNT, PersistentDataType.INTEGER, remaining);
+                        if (replacement instanceof Ghast ghast) {
+                            ghast.setAI(false);
+                        }
                         updateMobNametag(replacement, rawType, remaining);
                         Chunk chunk = replacement.getLocation().getChunk();
                         String cKey = chunkMobKey(loc.getWorld().getName(),
@@ -401,6 +472,14 @@ public class SpawnerStackManager implements Listener {
                     } catch (Exception ignored) {}
                 }, 1L);
             }
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onGhastSpawn(CreatureSpawnEvent event) {
+        if (event.getEntityType() != EntityType.GHAST) return;
+        if (event.getEntity() instanceof Ghast ghast) {
+            ghast.setAI(false);
         }
     }
 

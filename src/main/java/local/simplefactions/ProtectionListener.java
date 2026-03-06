@@ -21,10 +21,12 @@ public class ProtectionListener implements Listener {
 
     private final FactionManager manager;
     private final EconomyManager economyManager;
+    private final PlayerRankManager rankManager;
 
-    public ProtectionListener(FactionManager manager, EconomyManager economyManager) {
+    public ProtectionListener(FactionManager manager, EconomyManager economyManager, PlayerRankManager rankManager) {
         this.manager = manager;
         this.economyManager = economyManager;
+        this.rankManager = rankManager;
     }
 
     /**
@@ -55,7 +57,7 @@ public class ProtectionListener implements Listener {
             return;
         }
 
-        if (!hasClaimAccess(event.getPlayer().getUniqueId(), owner, world, x, z, ClaimAccessPermission.BREAK_BLOCKS)) {
+        if (!hasClaimAccess(event.getPlayer(), owner, world, x, z, ClaimAccessPermission.BREAK_BLOCKS)) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(ChatColor.RED + "You cannot break blocks here.");
             return;
@@ -143,7 +145,7 @@ public class ProtectionListener implements Listener {
                 ? ClaimAccessPermission.USE_TNT
                 : ClaimAccessPermission.PLACE_BLOCKS;
 
-        if (!hasClaimAccess(event.getPlayer().getUniqueId(), owner, world, x, z, needed)) {
+        if (!hasClaimAccess(event.getPlayer(), owner, world, x, z, needed)) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(ChatColor.RED + "You cannot place blocks here.");
             return;
@@ -199,7 +201,7 @@ public class ProtectionListener implements Listener {
             return;
         }
 
-        if (!hasClaimAccess(event.getPlayer().getUniqueId(), owner, world, x, z, needed)) {
+        if (!hasClaimAccess(event.getPlayer(), owner, world, x, z, needed)) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(ChatColor.RED + "You don't have access for that in this claim.");
         }
@@ -216,7 +218,7 @@ public class ProtectionListener implements Listener {
         String owner = manager.getClaimOwner(world, x, z);
         if (owner == null) return;
 
-        if (!hasClaimAccess(event.getPlayer().getUniqueId(), owner, world, x, z, ClaimAccessPermission.USE_TNT)) {
+        if (!hasClaimAccess(event.getPlayer(), owner, world, x, z, ClaimAccessPermission.USE_TNT)) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(ChatColor.RED + "You cannot ignite blocks/TNT in this claim.");
         }
@@ -256,11 +258,20 @@ public class ProtectionListener implements Listener {
         }
     }
 
-    private boolean hasClaimAccess(java.util.UUID playerId, String ownerFactionName, String world, int x, int z, ClaimAccessPermission permission) {
+    private boolean hasClaimAccess(org.bukkit.entity.Player player, String ownerFactionName, String world, int x, int z, ClaimAccessPermission permission) {
+        java.util.UUID playerId = player.getUniqueId();
         FactionManager.Faction playerFaction = manager.getFaction(playerId);
         if (playerFaction != null && playerFaction.getName().equalsIgnoreCase(ownerFactionName)) {
             return true;
         }
+
+        FactionManager.Faction ownerFaction = manager.getFactionByName(ownerFactionName);
+        if (ownerFaction != null && manager.isSystemFaction(ownerFaction)) {
+            if (player.isOp()) return true;
+            PlayerRank rank = rankManager != null ? rankManager.getRank(player) : PlayerRank.DEFAULT;
+            if (rank.hasFullStaffAccess()) return true;
+        }
+
         return manager.canAccessClaim(playerId, world, x, z, permission);
     }
 

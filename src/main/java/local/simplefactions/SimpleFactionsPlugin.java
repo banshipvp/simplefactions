@@ -21,6 +21,11 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
     private SpawnerStackManager spawnerStackManager;
     private MilestoneManager milestoneManager;
     private ChallengeManager challengeManager;
+    private ModerationManager moderationManager;
+    private PlayerHomeManager playerHomeManager;
+    private PlayerVaultManager playerVaultManager;
+    private GlobalWarpManager globalWarpManager;
+    private EnvoyManager envoyManager;
     private BukkitTask autoSaveTask;
     private BukkitTask timeLockTask;
 
@@ -88,7 +93,11 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(new ChallengeListener(challengeManager), this);
         Bukkit.getPluginManager().registerEvents(challengeGUI, this);
 
-        Bukkit.getPluginManager().registerEvents(new ProtectionListener(factionManager, economyManager), this);
+        // Rank manager must be initialized before listeners that depend on it.
+        playerRankManager = new PlayerRankManager(this);
+        playerRankManager.loadData(getDataFolder());
+
+        Bukkit.getPluginManager().registerEvents(new ProtectionListener(factionManager, economyManager, playerRankManager), this);
         Bukkit.getPluginManager().registerEvents(new TeleportProtectionListener(factionManager, warzoneManager), this);
         getServer().getPluginManager().registerEvents(new SpawnerStackListener(spawnerStackManager, factionManager), this);
         getServer().getPluginManager().registerEvents(new MobCombatListener(), this);
@@ -99,8 +108,47 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(accessGui, this);
 
         // Rank & Queue system
-        playerRankManager = new PlayerRankManager(this);
-        playerRankManager.loadData(getDataFolder());
+        moderationManager = new ModerationManager();
+        playerHomeManager = new PlayerHomeManager(this);
+        playerHomeManager.load();
+        playerVaultManager = new PlayerVaultManager(this);
+        playerVaultManager.load();
+        globalWarpManager = new GlobalWarpManager(this);
+        globalWarpManager.load();
+
+        StaffToolsCommand staffTools = new StaffToolsCommand(playerRankManager, moderationManager);
+        getCommand("staffhelp").setExecutor(staffTools);
+        getCommand("staffhelp").setTabCompleter(staffTools);
+        getCommand("rankset").setExecutor(staffTools);
+        getCommand("rankset").setTabCompleter(staffTools);
+        getCommand("v").setExecutor(staffTools);
+        getCommand("v").setTabCompleter(staffTools);
+        getCommand("vanish").setExecutor(staffTools);
+        getCommand("vanish").setTabCompleter(staffTools);
+        getCommand("tempmute").setExecutor(staffTools);
+        getCommand("tempmute").setTabCompleter(staffTools);
+        getCommand("unmute").setExecutor(staffTools);
+        getCommand("unmute").setTabCompleter(staffTools);
+        getCommand("mute").setExecutor(staffTools);
+        getCommand("mute").setTabCompleter(staffTools);
+        getCommand("tempban").setExecutor(staffTools);
+        getCommand("tempban").setTabCompleter(staffTools);
+        getCommand("ban").setExecutor(staffTools);
+        getCommand("ban").setTabCompleter(staffTools);
+        getCommand("unban").setExecutor(staffTools);
+        getCommand("unban").setTabCompleter(staffTools);
+        getCommand("warn").setExecutor(staffTools);
+        getCommand("warn").setTabCompleter(staffTools);
+        getCommand("tpto").setExecutor(staffTools);
+        getCommand("tpto").setTabCompleter(staffTools);
+        getCommand("freeze").setExecutor(staffTools);
+        getCommand("freeze").setTabCompleter(staffTools);
+        getCommand("unfreeze").setExecutor(staffTools);
+        getCommand("unfreeze").setTabCompleter(staffTools);
+        getServer().getPluginManager().registerEvents(staffTools, this);
+
+        getServer().getPluginManager().registerEvents(
+            new ChatListener(factionManager, playerRankManager, moderationManager), this);
 
         hubQueueManager = new HubQueueManager(this, playerRankManager);
         hubQueueManager.start();
@@ -112,17 +160,46 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         QueueCommand queueCmd = new QueueCommand(hubQueueManager, playerRankManager);
         getCommand("queue").setExecutor(queueCmd);
 
+        HomeCommand homeCommand = new HomeCommand(playerHomeManager);
+        SetHomeCommand setHomeCommand = new SetHomeCommand(playerHomeManager, playerRankManager);
+        PlayerVaultCommand vaultCommand = new PlayerVaultCommand(this, playerVaultManager, playerRankManager);
+        getCommand("home").setExecutor(homeCommand);
+        getCommand("home").setTabCompleter(homeCommand);
+        getCommand("homes").setExecutor(homeCommand);
+        getCommand("homes").setTabCompleter(homeCommand);
+        getCommand("sethome").setExecutor(setHomeCommand);
+        WarpCommand warpCommand = new WarpCommand(globalWarpManager);
+        getCommand("warp").setExecutor(warpCommand);
+        getCommand("warp").setTabCompleter(warpCommand);
+        getCommand("setwarp").setExecutor(warpCommand);
+        getCommand("setwarp").setTabCompleter(warpCommand);
+        getCommand("delwarp").setExecutor(warpCommand);
+        getCommand("delwarp").setTabCompleter(warpCommand);
+
+
+        getCommand("pv").setExecutor(vaultCommand);
+        getCommand("pv").setTabCompleter(vaultCommand);
+        getCommand("pvfilter").setExecutor(vaultCommand);
+        getCommand("pvfilter").setTabCompleter(vaultCommand);
+        getCommand("pvsearch").setExecutor(vaultCommand);
+        getCommand("pvsearch").setTabCompleter(vaultCommand);
+        getCommand("pvdump").setExecutor(vaultCommand);
+        getCommand("pvdump").setTabCompleter(vaultCommand);
+
         getServer().getPluginManager().registerEvents(new XpBottleListener(playerRankManager), this);
         getServer().getPluginManager().registerEvents(hubQueueManager, this);
         getServer().getPluginManager().registerEvents(
                 new FactionFlyListener(this, factionManager, warzoneManager, playerRankManager), this);
+        getServer().getPluginManager().registerEvents(homeCommand, this);
+        getServer().getPluginManager().registerEvents(vaultCommand, this);
+        getServer().getPluginManager().registerEvents(warpCommand, this);
 
         // Hub
         HubCommand hubCommand = new HubCommand(this);
         getCommand("hub").setExecutor(hubCommand);
         getCommand("sethub").setExecutor(hubCommand);
         getServer().getPluginManager().registerEvents(new HubJoinListener(this, hubCommand), this);
-        getServer().getPluginManager().registerEvents(new HubCommandRestrictionListener(this, hubCommand, hubQueueManager), this);
+        getServer().getPluginManager().registerEvents(new HubCommandRestrictionListener(this, hubCommand, hubQueueManager, playerRankManager), this);
 
         timeLockTask = new WorldTimeLockTask(this).runTaskTimer(this, 0L, 100L);
 
@@ -179,6 +256,25 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         if (playerRankManager != null) {
             getLogger().info("Saving rank data...");
             playerRankManager.saveData(getDataFolder());
+            Bukkit.getOnlinePlayers().forEach(playerRankManager::clearPlayerRuntimeState);
+        }
+
+        if (playerHomeManager != null) {
+            playerHomeManager.save();
+        }
+
+        if (playerVaultManager != null) {
+            playerVaultManager.save();
+        }
+
+        if (globalWarpManager != null) {
+            globalWarpManager.save();
+        }
+
+        if (envoyManager != null) {
+            envoyManager.stopAutoSpawnScheduler();
+            envoyManager.save();
+            envoyManager.clearActiveEnvoys();
         }
 
         getLogger().info("SimpleFactions disabled.");
@@ -190,6 +286,18 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
 
     public ChallengeManager getChallengeManager() {
         return challengeManager;
+    }
+
+    public HubQueueManager getHubQueueManager() {
+        return hubQueueManager;
+    }
+
+    public GlobalWarpManager getGlobalWarpManager() {
+        return globalWarpManager;
+    }
+
+    public WarzoneManager getWarzoneManager() {
+        return warzoneManager;
     }
     
     public CoreChunkManager getCoreChunkManager() {
