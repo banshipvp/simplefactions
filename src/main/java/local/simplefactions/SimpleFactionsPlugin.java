@@ -6,6 +6,11 @@ import org.bukkit.scheduler.BukkitTask;
 
 public final class SimpleFactionsPlugin extends JavaPlugin {
 
+    private static SimpleFactionsPlugin instance;
+
+    public static SimpleFactionsPlugin getInstance() { return instance; }
+
+
     private FactionManager factionManager;
     private WarzoneManager warzoneManager;
     private TechnoFactionsBridge bridge;
@@ -21,6 +26,7 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        instance = this;
         saveDefaultConfig();
 
         factionManager = new FactionManager();
@@ -180,6 +186,10 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
 
     public FactionManager getFactionManager() {
         return factionManager;
+    }
+
+    public ChallengeManager getChallengeManager() {
+        return challengeManager;
     }
     
     public CoreChunkManager getCoreChunkManager() {

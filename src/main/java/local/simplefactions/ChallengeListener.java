@@ -1,22 +1,25 @@
 package local.simplefactions;
 
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.enchantment.EnchantItemEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
-import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.player.PlayerExpChangeEvent;
 import org.bukkit.event.player.PlayerFishEvent;
 
 /**
  * Listens for world events and forwards them to ChallengeManager.
- * Supports all 20 challenge TrackerTypes.
+ *
+ * Supported tracker types handled here (native events):
+ *   BLOCK_BREAK, BLOCK_PLACE, PLAYER_KILL, MOB_KILL, FISH_CAUGHT, XP_GAIN
+ *
+ * The following are handled via cross-plugin hooks (faction-enchants, SimpleEconomy):
+ *   BOOK_OPEN, ENCHANT_APPLY, ENVOY_OPEN, COINFLIP_WIN
  */
 public class ChallengeListener implements Listener {
 
@@ -36,6 +39,16 @@ public class ChallengeListener implements Listener {
                 e.getBlock().getType(), null);
     }
 
+    // ── BLOCK_PLACE ───────────────────────────────────────────────────────────
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent e) {
+        Player p = e.getPlayer();
+        manager.increment(p.getUniqueId(), p.getName(),
+                ChallengeManager.TrackerType.BLOCK_PLACE,
+                e.getBlock().getType(), null);
+    }
+
     // ── PLAYER_KILL ───────────────────────────────────────────────────────────
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -50,7 +63,7 @@ public class ChallengeListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityDeath(EntityDeathEvent e) {
-        if (e.getEntityType() == EntityType.PLAYER) return; // handled above
+        if (e.getEntityType() == EntityType.PLAYER) return;
         Player killer = e.getEntity().getKiller();
         if (killer == null) return;
         manager.increment(killer.getUniqueId(), killer.getName(),
@@ -68,37 +81,13 @@ public class ChallengeListener implements Listener {
                 ChallengeManager.TrackerType.FISH_CAUGHT, null, null);
     }
 
-    // ── ENCHANT_DONE ──────────────────────────────────────────────────────────
+    // ── XP_GAIN ───────────────────────────────────────────────────────────────
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onEnchant(EnchantItemEvent e) {
-        Player p = e.getEnchanter();
+    public void onXpGain(PlayerExpChangeEvent e) {
+        if (e.getAmount() <= 0) return;
+        Player p = e.getPlayer();
         manager.increment(p.getUniqueId(), p.getName(),
-                ChallengeManager.TrackerType.ENCHANT_DONE, null, null);
-    }
-
-    // ── ARROW_SHOT ────────────────────────────────────────────────────────────
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBowShot(EntityShootBowEvent e) {
-        Entity shooter = e.getEntity();
-        if (!(shooter instanceof Player p)) return;
-        // Only count arrows (not tridents, etc.)
-        if (e.getProjectile() instanceof Projectile proj) {
-            if (proj.getType() != EntityType.ARROW
-                    && proj.getType() != EntityType.SPECTRAL_ARROW) return;
-        }
-        manager.increment(p.getUniqueId(), p.getName(),
-                ChallengeManager.TrackerType.ARROW_SHOT, null, null);
-    }
-
-    // ── ANIMAL_BREED ──────────────────────────────────────────────────────────
-
-    // Note: EntityBreedEvent is Paper-only. We use a simple import guard.
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBreed(org.bukkit.event.entity.EntityBreedEvent e) {
-        if (!(e.getBreeder() instanceof Player p)) return;
-        manager.increment(p.getUniqueId(), p.getName(),
-                ChallengeManager.TrackerType.ANIMAL_BREED, null, null);
+                ChallengeManager.TrackerType.XP_GAIN, null, null, e.getAmount());
     }
 }

@@ -74,8 +74,8 @@ public class ChallengeGUI implements Listener {
                 "§8Run §e/claim §8after challenge ends."));
 
         // ── Challenge block (main clickable) ──────────────────────────────────
-        List<Map.Entry<UUID, Integer>> top3  = manager.getLeaderboard(3);
-        Map<UUID, String>              names = manager.getNames();
+        List<Map.Entry<UUID, Long>> top3  = manager.getLeaderboard(3);
+        Map<UUID, String>             names = manager.getNames();
 
         List<String> lore = new ArrayList<>();
         lore.add("§7" + current.description);
@@ -87,8 +87,8 @@ public class ChallengeGUI implements Listener {
         } else {
             for (int i = 0; i < top3.size(); i++) {
                 String name  = names.getOrDefault(top3.get(i).getKey(), "?");
-                int    score = top3.get(i).getValue();
-                lore.add(medals[i] + " §f" + name + " §8— §e" + score);
+                long   score = top3.get(i).getValue();
+                lore.add(medals[i] + " §f" + name + " §8— §e" + ChallengeManager.fmt(score));
             }
         }
         lore.add("§8─────────────────────────");
@@ -131,21 +131,21 @@ public class ChallengeGUI implements Listener {
         }
 
         // Player heads: valid slots 10-16, 19-25, 28-34, 37-43  (7 per row, 4 rows = 28 total)
-        List<Map.Entry<UUID, Integer>> board = manager.getLeaderboard(28);
+        List<Map.Entry<UUID, Long>> board = manager.getLeaderboard(28);
         Map<UUID, String> names = manager.getNames();
         String[] medals = {"§6§l#1", "§7§l#2", "§c§l#3"};
 
         int[] slots = buildSlots();
         for (int i = 0; i < Math.min(board.size(), slots.length); i++) {
             UUID uuid  = board.get(i).getKey();
-            int  score = board.get(i).getValue();
+            long score = board.get(i).getValue();
             String dname = names.getOrDefault(uuid, "?");
             String rank  = i < medals.length ? medals[i] : "§f#" + (i + 1);
             long   prize = i < ChallengeManager.PRIZES.length ? ChallengeManager.PRIZES[i] : 0;
 
             ItemStack head = playerHead(uuid, dname,
                     rank + " §f" + dname,
-                    "§7Score: §e" + score,
+                    "§7Score: §e" + ChallengeManager.fmt(score),
                     prize > 0 ? "§7Prize: §6$" + ChallengeManager.fmt(prize) : "§8No prize");
             inv.setItem(slots[i], head);
         }
