@@ -29,11 +29,11 @@ public class HelpAdminCommand implements CommandExecutor {
         sender.sendMessage("  §f/fund reset §7- Reset server-start timer for TIME milestones");
         sender.sendMessage(" ");
 
-        sender.sendMessage("§e● Challenges (/challenge)");
-        sender.sendMessage("  §f/challenge start <type> §7- Start a challenge");
-        sender.sendMessage("     §8Types: blocks_mined, player_kills, mob_kills, fish_caught, crates_opened");
-        sender.sendMessage("  §f/challenge end §7- End challenge and pay top-3 prizes");
-        sender.sendMessage("  §f/challenges §7- View leaderboard (players can also use this)");
+        sender.sendMessage("§e● Challenges (/challenge admin)");
+        sender.sendMessage("  §7Challenges rotate §eautomatically every 24 hours§7.");
+        sender.sendMessage("  §f/challenge admin skip §7- Force a new random challenge now");
+        sender.sendMessage("  §f/challenge admin set <id> §7- Force a specific challenge");
+        sender.sendMessage("  §f/challenges §7- View current challenge GUI (opens for all players)");
         sender.sendMessage(" ");
 
         sender.sendMessage("§e● Shop (SimpleShop)");

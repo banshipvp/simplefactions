@@ -52,12 +52,16 @@ commands:
     permission: simplefactions.admin
     default: op
   challenges:
-    description: View the active challenge leaderboard
+    description: View the daily challenge GUI
     usage: /challenges
     default: true
   challenge:
-    description: Manage server challenges (admin start/end)
-    usage: /challenge [start <type>|end|info]
+    description: View daily challenge (alias) or admin control
+    usage: /challenge [admin skip|set <id>]
+    default: true
+  claim:
+    description: Claim your prize for placing top 3 in a challenge
+    usage: /claim
     default: true
 
 permissions:

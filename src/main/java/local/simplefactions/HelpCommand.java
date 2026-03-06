@@ -103,7 +103,8 @@ public class HelpCommand implements CommandExecutor {
             lines.add("§f/fund §7- View server milestones");
             lines.add("§f/fund info <id> §7- Details on a milestone");
             lines.add("§f/fund donate <id> <amount> §7- Donate toward a goal");
-            lines.add("§f/challenges §7- View active challenge leaderboard");
+            lines.add("§f/challenges §7- View today's daily challenge GUI");
+            lines.add("§f/claim §7- Claim your top-3 challenge prize");
             lines.add(" ");
             lines.add("§6SimpleKits");
             lines.add("§f/gkits §7- Open gkits GUI (unlocks when milestone reached!)");

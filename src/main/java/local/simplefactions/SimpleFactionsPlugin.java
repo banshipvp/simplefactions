@@ -69,14 +69,18 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         getCommand("fund").setExecutor(fundCmd);
         getCommand("fund").setTabCompleter(fundCmd);
 
-        // Challenges
-        challengeManager = new ChallengeManager(economyManager);
-        ChallengeCommand challengeCmd = new ChallengeCommand(challengeManager);
+        // Challenges (automatic 24-h rotation)
+        challengeManager = new ChallengeManager(economyManager, this);
+        challengeManager.start(); // loads persisted data + starts scheduler
+        ChallengeGUI challengeGUI = new ChallengeGUI(challengeManager, this);
+        ChallengeCommand challengeCmd = new ChallengeCommand(challengeManager, challengeGUI);
         getCommand("challenges").setExecutor(challengeCmd);
         getCommand("challenges").setTabCompleter(challengeCmd);
         getCommand("challenge").setExecutor(challengeCmd);
         getCommand("challenge").setTabCompleter(challengeCmd);
+        getCommand("claim").setExecutor(new ClaimCommand(challengeManager));
         Bukkit.getPluginManager().registerEvents(new ChallengeListener(challengeManager), this);
+        Bukkit.getPluginManager().registerEvents(challengeGUI, this);
 
         Bukkit.getPluginManager().registerEvents(new ProtectionListener(factionManager, economyManager), this);
         Bukkit.getPluginManager().registerEvents(new TeleportProtectionListener(factionManager, warzoneManager), this);
@@ -146,6 +150,10 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         if (factionManager != null) {
             getLogger().info("Saving faction data...");
             factionManager.saveData(getDataFolder());
+        }
+
+        if (challengeManager != null) {
+            challengeManager.saveData();
         }
         
         if (bridge != null) {
