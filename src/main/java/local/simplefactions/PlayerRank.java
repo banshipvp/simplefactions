@@ -22,18 +22,19 @@ import net.kyori.adventure.text.format.NamedTextColor;
  */
 public enum PlayerRank {
 
-    DEFAULT  (0,   "§7Default",       "§7", "default",   1,  1, 10.0, false, NamedTextColor.GRAY),
-    SCOUT    (1,   "§aScout",         "§a", "scout",     1,  1, 10.0, false, NamedTextColor.GREEN),
-    MILITANT (2,   "§eMilitant",      "§e", "militant",  2,  2,  8.5, false, NamedTextColor.YELLOW),
-    TACTICIAN(3,   "§6Tactician",     "§6", "tactician", 4,  5,  6.0, false, NamedTextColor.GOLD),
-    WARLORD  (4,   "§5Warlord",       "§d", "warlord",   8, 10,  3.0, false, NamedTextColor.LIGHT_PURPLE),
-    SOVEREIGN(5,   "§c§lSovereign",   "§c", "sovereign", 15, 20,  0.0, true,  NamedTextColor.RED),
+    //                                                                                          tpDelay
+    DEFAULT  (0,   "§7Default",       "§7", "default",   1,  1, 10.0, false, NamedTextColor.GRAY,         7),
+    SCOUT    (1,   "§aScout",         "§a", "scout",     1,  1, 10.0, false, NamedTextColor.GREEN,        7),
+    MILITANT (2,   "§eMilitant",      "§e", "militant",  2,  2,  8.5, false, NamedTextColor.YELLOW,       7),
+    TACTICIAN(3,   "§6Tactician",     "§6", "tactician", 4,  5,  6.0, false, NamedTextColor.GOLD,         7),
+    WARLORD  (4,   "§5Warlord",       "§d", "warlord",   8, 10,  3.0, false, NamedTextColor.LIGHT_PURPLE, 2),
+    SOVEREIGN(5,   "§c§lSovereign",   "§c", "sovereign", 15, 20,  0.0, true,  NamedTextColor.RED,          2),
 
-    HELPER   (50,  "§dHelper",        "§d", "helper",    15, 20,  0.0, true,  NamedTextColor.LIGHT_PURPLE),
-    MOD      (60,  "§bMod",           "§b", "mod",       15, 20,  0.0, true,  NamedTextColor.AQUA),
-    DEV      (90,  "§1Dev",           "§1", "dev",       15, 20,  0.0, true,  NamedTextColor.DARK_BLUE),
-    ADMIN    (95,  "§4Admin",         "§4", "admin",     15, 20,  0.0, true,  NamedTextColor.DARK_RED),
-    OWNER    (100, "§5Owner",         "§5", "owner",     15, 20,  0.0, true,  NamedTextColor.DARK_PURPLE);
+    HELPER   (50,  "§dHelper",        "§d", "helper",    15, 20,  0.0, true,  NamedTextColor.LIGHT_PURPLE, 2),
+    MOD      (60,  "§bMod",           "§b", "mod",       15, 20,  0.0, true,  NamedTextColor.AQUA,         2),
+    DEV      (90,  "§1Dev",           "§1", "dev",       15, 20,  0.0, true,  NamedTextColor.DARK_BLUE,    2),
+    ADMIN    (95,  "§4Admin",         "§4", "admin",     15, 20,  0.0, true,  NamedTextColor.DARK_RED,     2),
+    OWNER    (100, "§5Owner",         "§5", "owner",     15, 20,  0.0, true,  NamedTextColor.DARK_PURPLE,  2);
 
     private final int     level;
     private final String  displayName;
@@ -44,10 +45,11 @@ public enum PlayerRank {
     private final double  xpExhaustMinutes;  // 0 = no cooldown
     private final boolean fly;
     private final NamedTextColor namedColor;
+    private final int     tpDelaySecs;       // TP countdown seconds (0 = instant)
 
     PlayerRank(int level, String displayName, String chatColor, String groupId,
                int maxHomes, int maxVaults, double xpExhaustMinutes, boolean fly,
-               NamedTextColor namedColor) {
+               NamedTextColor namedColor, int tpDelaySecs) {
         this.level            = level;
         this.displayName      = displayName;
         this.chatColor        = chatColor;
@@ -57,6 +59,7 @@ public enum PlayerRank {
         this.xpExhaustMinutes = xpExhaustMinutes;
         this.fly              = fly;
         this.namedColor       = namedColor;
+        this.tpDelaySecs      = tpDelaySecs;
     }
 
     // ── Getters ────────────────────────────────────────────────────────────────
@@ -79,6 +82,9 @@ public enum PlayerRank {
 
     /** True if this rank enforces a cooldown on /xpbottle. */
     public boolean hasXpExhaust()       { return xpExhaustMinutes > 0; }
+
+    /** Teleport countdown in seconds (0 = instant). Mirrors xpExhaust rank progression. */
+    public int getTpDelaySeconds()      { return tpDelaySecs; }
 
     public boolean isStaff() {
         return this == HELPER || this == MOD || this == DEV || this == ADMIN || this == OWNER;

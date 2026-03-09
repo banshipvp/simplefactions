@@ -8,7 +8,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.entity.Explosive;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 
 import java.util.HashMap;
@@ -44,13 +46,24 @@ public class WarzoneListener implements Listener {
     public void onPvP(EntityDamageByEntityEvent event) {
         Entity damager = event.getDamager();
         Entity victim  = event.getEntity();
-        if (!(damager instanceof Player attacker) || !(victim instanceof Player)) return;
 
-        // Cancel hits if either participant is in a safezone
-        if (warzoneManager.isSafezone(attacker.getLocation())
-                || warzoneManager.isSafezone(victim.getLocation())) {
-            event.setCancelled(true);
-            attacker.sendMessage("§c✗ PvP is disabled in the Safezone.");
+        // ── Safezone: protect players from ALL entity damage (PvP + mobs + explosions) ──
+        if (victim instanceof Player) {
+            if (warzoneManager.isSafezone(victim.getLocation())) {
+                event.setCancelled(true);
+                if (damager instanceof Player attacker) {
+                    attacker.sendMessage("§c\u2717 PvP is disabled in the Safezone.");
+                }
+                return;
+            }
+        }
+
+        // ── Also cancel PvP if attacker is in safezone ──
+        if (damager instanceof Player attacker && victim instanceof Player) {
+            if (warzoneManager.isSafezone(attacker.getLocation())) {
+                event.setCancelled(true);
+                attacker.sendMessage("§c\u2717 PvP is disabled in the Safezone.");
+            }
         }
     }
 

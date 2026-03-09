@@ -242,6 +242,49 @@ public class SpawnerStackManager implements Listener {
         return Collections.unmodifiableCollection(stacks.values());
     }
 
+    /** Returns the in-memory stacked mob count for the given entity, or 1 if not tracked. */
+    public int getMobStackCount(UUID uid) {
+        return mobStackCount.getOrDefault(uid, 1);
+    }
+
+    /**
+     * Adjusts the in-memory mob stack count for an entity.
+     * Used by MobDropListener to account for mass kills from environmental damage.
+     * The count is reduced by {@code reduction} so SpawnerStackManager respawns fewer mobs.
+     */
+    public void adjustMobStackCount(UUID uid, int reduction) {
+        Integer current = mobStackCount.get(uid);
+        if (current == null || reduction <= 0) return;
+        int newCount = Math.max(1, current - reduction);
+        mobStackCount.put(uid, newCount);
+        Entity e = Bukkit.getEntity(uid);
+        if (e != null && e.isValid()) {
+            String type = e.getPersistentDataContainer().getOrDefault(KEY_STACK_TYPE, PersistentDataType.STRING, "");
+            if (!type.isEmpty()) updateMobNametag(e, type, newCount);
+        }
+    }
+
+    /**
+     * Returns a breakdown of spawners in a specific chunk.
+     * Map key = entity type key (e.g. "zombie"), value = total count of stacked spawners.
+     */
+    public Map<String, Integer> getSpawnersBreakdownForChunk(String world, int chunkX, int chunkZ) {
+        Map<String, Integer> result = new LinkedHashMap<>();
+        for (SpawnerStack stack : stacks.values()) {
+            String[] parts = stack.getLocationKey().split(":");
+            if (parts.length != 4) continue;
+            if (!world.equalsIgnoreCase(parts[0])) continue;
+            try {
+                int bx = Integer.parseInt(parts[1]);
+                int bz = Integer.parseInt(parts[3]);
+                if ((bx >> 4) == chunkX && (bz >> 4) == chunkZ) {
+                    result.merge(stack.getEntityTypeKey(), stack.getCount(), Integer::sum);
+                }
+            } catch (NumberFormatException ignored) { /* skip */ }
+        }
+        return result;
+    }
+
     /** Total number of individual spawners (across all stacks) owned by a faction. */
     public int getTotalCountForFaction(String factionName) {
         if (factionName == null) return 0;

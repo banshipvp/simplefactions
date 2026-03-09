@@ -178,6 +178,11 @@ commands:
     usage: /delwarp <name>
     permission: simplefactions.warp.manage
     default: op
+  roam:
+    description: Toggle roam mode (spectator view, clip through walls)
+    usage: /roam
+    permission: simplefactions.staff.roam
+    default: op
 
 permissions:
   simplefactions.sethub:
@@ -205,6 +210,7 @@ permissions:
       simplefactions.staff.unban: true
       simplefactions.staff.warn: true
       simplefactions.staff.vanish: true
+      simplefactions.staff.roam: true
   simplefactions.staff.mod:
     description: Moderator moderation bundle
     default: false
@@ -247,6 +253,9 @@ permissions:
     default: false
   simplefactions.staff.vanish:
     description: Allows /v and /vanish
+    default: false
+  simplefactions.staff.roam:
+    description: Allows /roam (spectator roam mode)
     default: false
   simplefactions.staff.vanish.see:
     description: Can see vanished staff

@@ -12,7 +12,8 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
-import org.bukkit.event.player.AsyncPlayerChatEvent;
+import io.papermc.paper.event.player.AsyncChatEvent;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -226,9 +227,34 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter, Listen
     private boolean filterMatches(PlayerVaultManager.VaultData vault, String filter, int index) {
         if (filter == null || filter.isBlank()) return true;
         String normalized = filter.toLowerCase(Locale.ROOT);
-        return vault.getName().toLowerCase(Locale.ROOT).contains(normalized)
-                || vault.getIcon().name().toLowerCase(Locale.ROOT).contains(normalized)
-                || String.valueOf(index).contains(normalized);
+
+        // Check vault name, icon name, and vault number
+        if (vault.getName().toLowerCase(Locale.ROOT).contains(normalized)
+                || vault.getIcon().name().toLowerCase(Locale.ROOT).replace('_', ' ').contains(normalized)
+                || String.valueOf(index).contains(normalized)) {
+            return true;
+        }
+
+        // Check item contents
+        ItemStack[] contents = vault.getContents();
+        if (contents != null) {
+            for (ItemStack item : contents) {
+                if (item == null || item.getType() == Material.AIR) continue;
+                // Check material name (e.g. "chicken_spawner" → "chicken spawner")
+                if (item.getType().name().toLowerCase(Locale.ROOT).replace('_', ' ').contains(normalized)) return true;
+                // Check custom display name (strip colour codes)
+                if (item.hasItemMeta()) {
+                    ItemMeta meta = item.getItemMeta();
+                    if (meta != null && meta.hasDisplayName()) {
+                        String displayName = meta.getDisplayName()
+                                .replaceAll("§[0-9a-fk-orA-FK-OR]", "")
+                                .toLowerCase(Locale.ROOT);
+                        if (displayName.contains(normalized)) return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private void openVaultInventory(Player player, int index, boolean fromMenu) {
@@ -385,14 +411,14 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter, Listen
     }
 
     @EventHandler
-    public void onChatInput(AsyncPlayerChatEvent event) {
+    public void onChatInput(AsyncChatEvent event) {
         UUID playerId = event.getPlayer().getUniqueId();
         Integer renameIndex = awaitingRename.get(playerId);
         boolean waitingForFilter = awaitingFilterInput.contains(playerId);
         if (renameIndex == null && !waitingForFilter) return;
 
         event.setCancelled(true);
-        String input = event.getMessage().trim();
+        String input = PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
 
         Bukkit.getScheduler().runTask(plugin, () -> {
             Player player = Bukkit.getPlayer(playerId);

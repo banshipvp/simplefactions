@@ -11,10 +11,19 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.SignChangeEvent;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Player;
+import org.bukkit.GameMode;
+import org.bukkit.event.entity.EntityChangeBlockEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 
 public class ProtectionListener implements Listener {
@@ -22,23 +31,48 @@ public class ProtectionListener implements Listener {
     private final FactionManager manager;
     private final EconomyManager economyManager;
     private final PlayerRankManager rankManager;
+    private final WarzoneManager warzoneManager;
 
-    public ProtectionListener(FactionManager manager, EconomyManager economyManager, PlayerRankManager rankManager) {
+    public ProtectionListener(FactionManager manager, EconomyManager economyManager, PlayerRankManager rankManager, WarzoneManager warzoneManager) {
         this.manager = manager;
         this.economyManager = economyManager;
         this.rankManager = rankManager;
+        this.warzoneManager = warzoneManager;
     }
 
     /**
      * Prevent spawners from actually spawning mobs.
      * Spawners are purely economic objects on this server — their value ramps
      * up in faction territory, but they do not produce live mobs.
+     *
+     * We also cancel ALL natural/environmental mob spawning (hostile and passive).
+     * The only mobs that should exist are plugin-spawned ones (CUSTOM reason)
+     * from the faction spawner system.
      */
     @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onSpawnerSpawn(CreatureSpawnEvent event) {
-        if (event.getSpawnReason() == CreatureSpawnEvent.SpawnReason.SPAWNER) {
-            event.setCancelled(true);
+    public void onCreatureSpawn(CreatureSpawnEvent event) {
+        switch (event.getSpawnReason()) {
+            // Allow: plugin-spawned mobs (faction spawner system, arenas, etc.)
+            case CUSTOM:
+            // Allow: player-built constructs
+            case BUILD_SNOWMAN:
+            case BUILD_IRONGOLEM:
+            case BUILD_WITHER:
+            // Allow: commands (/summon, admin tools)
+            case COMMAND:
+                return;
+            // Everything else — natural, chunk-gen, vanilla spawner blocks,
+            // village invasions, jockeys, reinforcements, breeding, etc. — all cancelled.
+            default:
+                event.setCancelled(true);
         }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onWardenAttack(EntityDamageByEntityEvent event) {
+        if (event.getDamager().getType() != EntityType.WARDEN) return;
+        if (!(event.getEntity() instanceof Player)) return;
+        event.setCancelled(true);
     }
 
     @EventHandler
@@ -49,10 +83,19 @@ public class ProtectionListener implements Listener {
 
         String owner = manager.getClaimOwner(world, x, z);
         if (owner == null) {
-            // Edge-case: tracked spawner in now-unclaimed chunk – clean up tracking
+            // Edge-case: tracked spawner in now-unclaimed chunk – still handle silk touch
             if (event.getBlock().getType() == Material.SPAWNER) {
                 Block b = event.getBlock();
                 manager.onSpawnerRemoved(b.getWorld().getName(), b.getX(), b.getY(), b.getZ());
+                ItemStack tool = event.getPlayer().getInventory().getItemInMainHand();
+                org.bukkit.enchantments.Enchantment silkKey =
+                        org.bukkit.enchantments.Enchantment.getByKey(org.bukkit.NamespacedKey.minecraft("silk_touch"));
+                boolean hasSilk = silkKey != null && tool != null && tool.containsEnchantment(silkKey);
+                if (hasSilk) {
+                    event.setCancelled(true);
+                    b.setType(Material.AIR);
+                    manager.popWholeSpawnerStack(b.getWorld().getName(), b.getX(), b.getY(), b.getZ(), event.getPlayer());
+                }
             }
             return;
         }
@@ -71,7 +114,21 @@ public class ProtectionListener implements Listener {
             double mineCost = SpawnerType.getBaseValue(spawnerType) * 0.10;
 
             ItemStack tool = event.getPlayer().getInventory().getItemInMainHand();
-            boolean hasSilkTouch = tool != null && tool.containsEnchantment(org.bukkit.enchantments.Enchantment.SILK_TOUCH);
+            // Paper 1.21: Enchantment.SILK_TOUCH static constant is null – must use getByKey()
+            org.bukkit.enchantments.Enchantment silkTouchEnchant =
+                    org.bukkit.enchantments.Enchantment.getByKey(org.bukkit.NamespacedKey.minecraft("silk_touch"));
+            boolean hasSilkTouch = silkTouchEnchant != null && tool != null && tool.containsEnchantment(silkTouchEnchant);
+
+            // Creative mode: admins can break spawners freely — deregister without silk touch requirement
+            if (event.getPlayer().getGameMode() == GameMode.CREATIVE) {
+                event.setCancelled(true);
+                b.setType(Material.AIR);
+                manager.onSpawnerRemoved(b.getWorld().getName(), b.getX(), b.getY(), b.getZ());
+                SpawnerStackManager ssm = manager.getSpawnerStackManager();
+                if (ssm != null) ssm.removeStack(b.getWorld().getName(), b.getX(), b.getY(), b.getZ());
+                return;
+            }
+
             if (!hasSilkTouch) {
                 event.setCancelled(true);
                 event.getPlayer().sendMessage(ChatColor.RED + "You need Silk Touch to mine spawners.");
@@ -92,29 +149,10 @@ public class ProtectionListener implements Listener {
                 event.getPlayer().sendMessage(ChatColor.YELLOW + "Paid $" + String.format("%,.0f", mineCost) + " to mine this spawner.");
             }
 
-            // If this is a stacked spawner (count > 1): pop one off, give item, keep the block
-            if (manager.popSpawnerFromStack(b.getWorld().getName(), b.getX(), b.getY(), b.getZ(), event.getPlayer())) {
-                event.setCancelled(true);
-                return;
-            }
-
-            // Stack is count == 1 (or no stack manager): handle custom drop + tracking cleanup
+            // Give the ENTIRE stack (1 or more spawners) and remove the block
             event.setCancelled(true);
             b.setType(Material.AIR);
-            ItemStack spawnerDrop = FactionManager.buildSpawnerItem(spawnerType);
-            java.util.Map<Integer, ItemStack> leftover = event.getPlayer().getInventory().addItem(spawnerDrop);
-            leftover.values().forEach(ls -> event.getPlayer().getWorld().dropItemNaturally(event.getPlayer().getLocation(), ls));
-
-            PlacedSpawnerRecord removed = manager.onSpawnerRemoved(
-                    b.getWorld().getName(), b.getX(), b.getY(), b.getZ());
-            if (removed != null) {
-                double lostValue = removed.getCurrentValue();
-                SpawnerType st = SpawnerType.fromEntityKey(removed.getEntityType());
-                String stName = st != null ? st.getDisplayName() : removed.getEntityType();
-                event.getPlayer().sendMessage(
-                        ChatColor.YELLOW + "⚠ " + stName + " Spawner removed from faction territory."
-                        + ChatColor.GRAY + " (was worth §e$" + String.format("%,.0f", lostValue) + ChatColor.GRAY + ")");
-            }
+            manager.popWholeSpawnerStack(b.getWorld().getName(), b.getX(), b.getY(), b.getZ(), event.getPlayer());
         }
     }
 
@@ -187,6 +225,16 @@ public class ProtectionListener implements Listener {
         int x = clicked.getChunk().getX();
         int z = clicked.getChunk().getZ();
 
+        // Always block utility block interactions in warzone/safezone (via warzoneManager)
+        if (warzoneManager != null) {
+            WarzoneManager.WarzoneType zone = warzoneManager.getZoneTypeAt(clicked.getLocation());
+            if (zone != null && isRestrictedInZone(clicked.getType())) {
+                event.setCancelled(true);
+                event.getPlayer().sendMessage(ChatColor.RED + "You cannot use that here.");
+                return;
+            }
+        }
+
         String owner = manager.getClaimOwner(world, x, z);
         if (owner == null) return;
 
@@ -197,6 +245,9 @@ public class ProtectionListener implements Listener {
             needed = ClaimAccessPermission.USE_DOORS;
         } else if (isRedstoneInteractive(clicked.getType())) {
             needed = ClaimAccessPermission.USE_REDSTONE;
+        } else if (isRestrictedInZone(clicked.getType())) {
+            // Anvils, enchanting tables, beacons — require build access in any claim
+            needed = ClaimAccessPermission.BREAK_BLOCKS;
         } else {
             return;
         }
@@ -204,6 +255,44 @@ public class ProtectionListener implements Listener {
         if (!hasClaimAccess(event.getPlayer(), owner, world, x, z, needed)) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(ChatColor.RED + "You don't have access for that in this claim.");
+        }
+    }
+
+    /**
+     * Prevent players from editing signs in any warzone, safezone, or system-faction claim.
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onSignEdit(SignChangeEvent event) {
+        Block block = event.getBlock();
+        String world = block.getWorld().getName();
+        int x = block.getChunk().getX();
+        int z = block.getChunk().getZ();
+
+        // Block sign editing in warzone/safezone regions
+        if (warzoneManager != null) {
+            WarzoneManager.WarzoneType zone = warzoneManager.getZoneTypeAt(block.getLocation());
+            if (zone != null) {
+                org.bukkit.entity.Player player = event.getPlayer();
+                PlayerRank rank = rankManager != null ? rankManager.getRank(player) : PlayerRank.DEFAULT;
+                if (!player.isOp() && !rank.hasFullStaffAccess()) {
+                    event.setCancelled(true);
+                    player.sendMessage(ChatColor.RED + "You cannot edit signs here.");
+                    return;
+                }
+            }
+        }
+
+        // Block sign editing in any system-faction claim (spawn, etc.)
+        String owner = manager.getClaimOwner(world, x, z);
+        if (owner == null) return;
+        FactionManager.Faction ownerFaction = manager.getFactionByName(owner);
+        if (ownerFaction == null) return;
+        if (manager.isSystemFaction(ownerFaction)) {
+            org.bukkit.entity.Player player = event.getPlayer();
+            if (!hasClaimAccess(player, owner, world, x, z, ClaimAccessPermission.BREAK_BLOCKS)) {
+                event.setCancelled(true);
+                player.sendMessage(ChatColor.RED + "You cannot edit signs here.");
+            }
         }
     }
 
@@ -224,6 +313,39 @@ public class ProtectionListener implements Listener {
         }
     }
 
+    /**
+     * Prevent players from trampling farmland (turning it to dirt by jumping on it)
+     * in any claimed territory they don't have build access to.
+     * This protects crop farms at spawn and in faction claims.
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onFarmlandTrample(EntityChangeBlockEvent event) {
+        if (!(event.getEntity() instanceof org.bukkit.entity.Player player)) return;
+        if (event.getBlock().getType() != Material.FARMLAND) return;
+        if (event.getTo() != Material.DIRT && event.getTo() != Material.COARSE_DIRT) return;
+
+        Block block = event.getBlock();
+        String world = block.getWorld().getName();
+        int cx = block.getChunk().getX();
+        int cz = block.getChunk().getZ();
+
+        // Always protect farmland inside warzones (tracked separately from faction claims)
+        if (warzoneManager != null) {
+            WarzoneManager.WarzoneType zone = warzoneManager.getZoneTypeAt(block.getLocation());
+            if (zone == WarzoneManager.WarzoneType.WARZONE || zone == WarzoneManager.WarzoneType.SAFEZONE) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        String owner = manager.getClaimOwner(world, cx, cz);
+        if (owner == null) return; // unclaimed – allow trampling
+
+        if (!hasClaimAccess(player, owner, world, cx, cz, ClaimAccessPermission.BREAK_BLOCKS)) {
+            event.setCancelled(true);
+        }
+    }
+
     @EventHandler
     public void onEntityExplode(EntityExplodeEvent event) {
         // Collect spawners that will actually be destroyed (not protected by TNT flag)
@@ -231,6 +353,12 @@ public class ProtectionListener implements Listener {
         java.util.List<Block> spawnersToDrop = new java.util.ArrayList<>();
 
         event.blockList().removeIf(block -> {
+            // Warzone / Safezone: always explosion-proof
+            if (warzoneManager != null) {
+                WarzoneManager.WarzoneType zone = warzoneManager.getZoneTypeAt(block.getLocation());
+                if (zone != null) return true;
+            }
+
             String world = block.getWorld().getName();
             int x = block.getChunk().getX();
             int z = block.getChunk().getZ();
@@ -241,7 +369,7 @@ public class ProtectionListener implements Listener {
             FactionManager.Faction ownerFaction = manager.getFactionByName(owner);
             if (ownerFaction == null) return false;
 
-            // Warzone (and any system faction) is always explosion-proof
+            // System factions (Warzone claim, Safezone claim) are always explosion-proof
             if (manager.isSystemFaction(ownerFaction)) return true;
 
             boolean tntProtected = !ownerFaction.isFlagEnabled(ClaimFlag.TNT);
@@ -256,6 +384,35 @@ public class ProtectionListener implements Listener {
         for (Block b : spawnersToDrop) {
             manager.onSpawnerRemoved(b.getWorld().getName(), b.getX(), b.getY(), b.getZ());
         }
+    }
+
+    /**
+     * Block explosions (beds, respawn anchors, etc.) are also prevented in warzones/safezones
+     * and any claimed territory with TNT protection enabled.
+     */
+    @EventHandler
+    public void onBlockExplode(BlockExplodeEvent event) {
+        event.blockList().removeIf(block -> {
+            // Warzone / Safezone: always explosion-proof
+            if (warzoneManager != null) {
+                WarzoneManager.WarzoneType zone = warzoneManager.getZoneTypeAt(block.getLocation());
+                if (zone != null) return true;
+            }
+
+            String world = block.getWorld().getName();
+            int x = block.getChunk().getX();
+            int z = block.getChunk().getZ();
+
+            String owner = manager.getClaimOwner(world, x, z);
+            if (owner == null) return false;
+
+            FactionManager.Faction ownerFaction = manager.getFactionByName(owner);
+            if (ownerFaction == null) return false;
+
+            if (manager.isSystemFaction(ownerFaction)) return true;
+
+            return !ownerFaction.isFlagEnabled(ClaimFlag.TNT);
+        });
     }
 
     private boolean hasClaimAccess(org.bukkit.entity.Player player, String ownerFactionName, String world, int x, int z, ClaimAccessPermission permission) {
@@ -301,5 +458,27 @@ public class ProtectionListener implements Listener {
                 || material == Material.LEVER
                 || material == Material.REPEATER
                 || material == Material.COMPARATOR;
+    }
+
+    /** Syncs faction chest view back to the backing inventory when a player closes it. */
+    @EventHandler
+    public void onFactionChestClose(InventoryCloseEvent event) {
+        if (!(event.getInventory().getHolder() instanceof FactionManager.FactionChestHolder holder)) return;
+        FactionManager.Faction faction = manager.getFactionByName(holder.getFactionName());
+        if (faction == null) return;
+        faction.syncChestView(event.getInventory());
+    }
+
+    /** Blocks that should be restricted in warzones/safezones and system-faction claims. */
+    private boolean isRestrictedInZone(Material material) {
+        return material == Material.ANVIL
+                || material == Material.CHIPPED_ANVIL
+                || material == Material.DAMAGED_ANVIL
+                || material == Material.ENCHANTING_TABLE
+                || material == Material.BEACON
+                || material.name().endsWith("_SIGN")
+                || material.name().endsWith("_WALL_SIGN")
+                || material.name().endsWith("_HANGING_SIGN")
+                || material.name().endsWith("_WALL_HANGING_SIGN");
     }
 }

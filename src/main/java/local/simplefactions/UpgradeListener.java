@@ -33,22 +33,30 @@ public class UpgradeListener implements Listener {
             return;
         }
 
-        String upgradeType = null;
-        
-        switch (slot) {
-            case 10 -> upgradeType = "maxmembers";
-            case 12 -> upgradeType = "spawnermult";
-            case 14 -> upgradeType = "maxwarps";
-            case 16 -> upgradeType = "chestslots";
-        }
+        String upgradeType = switch (slot) {
+            case 10 -> "maxmembers";
+            case 12 -> "spawnermult";
+            case 14 -> "maxwarps";
+            case 16 -> "chestslots";
+            case 28 -> "tnt2gunpowder";
+            case 30 -> "ingot2block";
+            case 32 -> "successrate";
+            default -> null;
+        };
 
         if (upgradeType == null) {
             return;
         }
 
+        // Determine the cap for this upgrade (toggle upgrades cap at 1)
+        int maxLevel = switch (upgradeType) {
+            case "tnt2gunpowder", "ingot2block" -> 1;
+            default -> 5;
+        };
+
         int currentLevel = faction.getUpgradeLevel(upgradeType);
-        if (currentLevel >= 5) {
-            player.sendMessage("§cThis upgrade is already maxed out!");
+        if (currentLevel >= maxLevel) {
+            player.sendMessage("§cThis upgrade is already " + (maxLevel == 1 ? "enabled" : "maxed out") + "!");
             return;
         }
 
@@ -64,9 +72,15 @@ public class UpgradeListener implements Listener {
         }
 
         faction.setUpgradeLevel(upgradeType, currentLevel + 1);
-        
+
+        boolean isToggle = upgradeType.equals("tnt2gunpowder") || upgradeType.equals("ingot2block");
         player.sendMessage("§a✓ Upgrade purchased!");
-        player.sendMessage("§f" + upgradeType + "§a is now level §f" + (currentLevel + 1) + "§a.");
+        if (isToggle) {
+            String label = upgradeType.equals("tnt2gunpowder") ? "TNT → Gunpowder" : "Ingot Compressor";
+            player.sendMessage("§f" + label + "§a has been §aenabled§a for your faction.");
+        } else {
+            player.sendMessage("§f" + upgradeType + "§a is now level §f" + (currentLevel + 1) + "§a.");
+        }
         
         // Refresh the GUI
         upgradeGUI.openUpgradeGUI(player);
@@ -78,6 +92,9 @@ public class UpgradeListener implements Listener {
             case "spawnermult" -> 150_000 * nextLevel;
             case "maxwarps" -> 50_000 * nextLevel;
             case "chestslots" -> 75_000 * nextLevel;
+            case "successrate" -> 200_000 * nextLevel;
+            case "tnt2gunpowder" -> 500_000;
+            case "ingot2block" -> 500_000;
             default -> 0;
         };
     }

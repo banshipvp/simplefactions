@@ -13,6 +13,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BlockStateMeta;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -22,6 +23,17 @@ import java.io.IOException;
 import java.util.*;
 
 public class FactionManager {
+
+    /**
+     * InventoryHolder used to tag faction chest views so they can be identified
+     * in InventoryCloseEvent without relying on fragile title-string matching.
+     */
+    public static class FactionChestHolder implements InventoryHolder {
+        private final String factionName;
+        public FactionChestHolder(String factionName) { this.factionName = factionName; }
+        public String getFactionName() { return factionName; }
+        @Override public Inventory getInventory() { return null; } // not used
+    }
 
     public static class Faction {
 
@@ -72,11 +84,14 @@ public class FactionManager {
         private final java.util.Map<UUID, java.util.Set<String>> playerChunkAccess = new java.util.HashMap<>();
         private final java.util.Set<UUID> playerAllClaimsAccess = new java.util.HashSet<>();
         
-        // upgrades: maxMembers, spawnerMultiplier, maxWarps, chestSlots
+        // upgrades: maxMembers, spawnerMultiplier, maxWarps, chestSlots, auto-tnt2gunpowder, auto-ingot2block, successrate
         private int upgradeMaxMembers = 0;      // level 0 = 10 base
         private int upgradeSpawnerMult = 0;     // level 0 = 1x multiplier
         private int upgradeMaxWarps = 0;        // level 0 = 5 base
         private int upgradeChestSlots = 0;      // level 0 = 1 hotbar (9 slots)
+        private int upgradeTnt2Gunpowder = 0;  // level 0 = off, 1 = on (converts TNT->Gunpowder in collection chests)
+        private int upgradeIngot2Block = 0;    // level 0 = off, 1 = on (auto-compresses 9 ingots->block)
+        private int upgradeSuccessRate = 0;    // level 0-5: +0/2/4/6/8/10% custom book success rate
 
         public Faction(String name, UUID leader) {
             this.name = name;
@@ -188,6 +203,9 @@ public class FactionManager {
                 case "spawnermult" -> upgradeSpawnerMult;
                 case "maxwarps" -> upgradeMaxWarps;
                 case "chestslots" -> upgradeChestSlots;
+                case "tnt2gunpowder" -> upgradeTnt2Gunpowder;
+                case "ingot2block" -> upgradeIngot2Block;
+                case "successrate" -> upgradeSuccessRate;
                 default -> 0;
             };
         }
@@ -197,12 +215,42 @@ public class FactionManager {
                 case "spawnermult" -> upgradeSpawnerMult = level;
                 case "maxwarps" -> upgradeMaxWarps = level;
                 case "chestslots" -> upgradeChestSlots = level;
+                case "tnt2gunpowder" -> upgradeTnt2Gunpowder = level;
+                case "ingot2block" -> upgradeIngot2Block = level;
+                case "successrate" -> upgradeSuccessRate = level;
             }
         }
         public int getMaxMembers() { return 10 + (5 * upgradeMaxMembers); }
         public int getMaxWarps() { return 5 + (2 * upgradeMaxWarps); }
         public int getChestSlots() { return 9 * (1 + upgradeChestSlots); }
         public double getSpawnerMultiplier() { return 1.0 + (0.1 * upgradeSpawnerMult); }
+        /** Returns the bonus success rate percentage (0, 2, 4, 6, 8 or 10) for custom book application. */
+        public int getSuccessRateBonus() { return upgradeSuccessRate * 2; }
+
+        /**
+         * Opens a correctly-sized faction chest view (slot count = getChestSlots()).
+         * Items from the backing 54-slot store are copied into the view.
+         * Close the view via {@link #syncChestView(org.bukkit.inventory.Inventory)} to persist changes.
+         */
+        public org.bukkit.inventory.Inventory openChestView() {
+            int slots = Math.max(9, Math.min(54, getChestSlots()));
+            FactionChestHolder holder = new FactionChestHolder(name);
+            org.bukkit.inventory.Inventory view = Bukkit.createInventory(
+                    holder, slots,
+                    net.kyori.adventure.text.Component.text("§6Faction Chest: " + name));
+            for (int i = 0; i < slots && i < chest.getSize(); i++) {
+                view.setItem(i, chest.getItem(i));
+            }
+            return view;
+        }
+
+        /** Syncs items from an open chest view back into the backing 54-slot inventory. */
+        public void syncChestView(org.bukkit.inventory.Inventory view) {
+            int slots = view.getSize();
+            for (int i = 0; i < slots && i < chest.getSize(); i++) {
+                chest.setItem(i, view.getItem(i));
+            }
+        }
         
         // ----- warps -----
         public java.util.Map<String, Location> getWarps() { return warps; }
@@ -896,6 +944,55 @@ public class FactionManager {
     }
 
     /**
+     * Give the ENTIRE spawner stack to the player and remove the block tracking.
+     * Used for silk-touch mining where the player gets all stacked spawners at once.
+     *
+     * @return number of spawners given (1 if no stack manager), or 0 on failure
+     */
+    public int popWholeSpawnerStack(String world, int x, int y, int z, Player player) {
+        int count = 1;
+        String entityTypeKey = null;
+
+        if (spawnerStackManager != null) {
+            SpawnerStack stack = spawnerStackManager.getStack(world, x, y, z);
+            if (stack != null) {
+                count = stack.getCount();
+                entityTypeKey = stack.getEntityTypeKey();
+                // Remove entire stack
+                spawnerStackManager.removeStack(world, x, y, z);
+                Faction faction = getFactionByName(stack.getFactionName());
+                if (faction != null) {
+                    for (int i = 0; i < count; i++) faction.removeSpawner(entityTypeKey);
+                }
+            }
+        }
+
+        if (entityTypeKey == null) {
+            // Legacy: resolve from block state then clean up
+            PlacedSpawnerRecord rec = onSpawnerRemoved(world, x, y, z);
+            entityTypeKey = rec != null ? rec.getEntityType() : "pig";
+            count = 1;
+        }
+
+        // Give all spawner items to player
+        for (int i = 0; i < count; i++) {
+            ItemStack spawnerItem = buildSpawnerItem(entityTypeKey);
+            Map<Integer, ItemStack> leftover = player.getInventory().addItem(spawnerItem);
+            leftover.forEach((idx, ls) -> player.getWorld().dropItemNaturally(player.getLocation(), ls));
+        }
+
+        SpawnerType st = SpawnerType.fromEntityKey(entityTypeKey);
+        String displayName = st != null ? st.getDisplayName() : entityTypeKey;
+        if (count > 1) {
+            player.sendMessage(ChatColor.GREEN + "\u2713 Received §e" + count + "x §f" + displayName
+                    + ChatColor.GREEN + " Spawners!");
+        } else {
+            player.sendMessage(ChatColor.YELLOW + "\u26a0 " + displayName + " Spawner removed.");
+        }
+        return count;
+    }
+
+    /**
      * If the block has a stack with count > 1: removes one spawner, gives the
      * player a matching spawner item, and informs them of the remaining count.
      *
@@ -1033,6 +1130,9 @@ public class FactionManager {
                 upgradesSection.set("spawnerMult", faction.upgradeSpawnerMult);
                 upgradesSection.set("maxWarps", faction.upgradeMaxWarps);
                 upgradesSection.set("chestSlots", faction.upgradeChestSlots);
+                upgradesSection.set("tnt2Gunpowder", faction.upgradeTnt2Gunpowder);
+                upgradesSection.set("ingot2Block", faction.upgradeIngot2Block);
+                upgradesSection.set("successRate", faction.upgradeSuccessRate);
 
                 // Save external access
                 ConfigurationSection accessSection = factionSection.createSection("access");
@@ -1231,6 +1331,9 @@ public class FactionManager {
                         faction.upgradeSpawnerMult = upgradesSection.getInt("spawnerMult", 0);
                         faction.upgradeMaxWarps = upgradesSection.getInt("maxWarps", 0);
                         faction.upgradeChestSlots = upgradesSection.getInt("chestSlots", 0);
+                        faction.upgradeTnt2Gunpowder = upgradesSection.getInt("tnt2Gunpowder", 0);
+                        faction.upgradeIngot2Block = upgradesSection.getInt("ingot2Block", 0);
+                        faction.upgradeSuccessRate = upgradesSection.getInt("successRate", 0);
                     }
 
                     // Load external access

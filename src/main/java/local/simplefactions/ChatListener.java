@@ -2,6 +2,7 @@ package local.simplefactions;
 
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.Player;
@@ -15,11 +16,13 @@ public class ChatListener implements Listener {
     private final FactionManager manager;
     private final PlayerRankManager rankManager;
     private final ModerationManager moderationManager;
+    private final EconomyManager economyManager;
 
-    public ChatListener(FactionManager manager, PlayerRankManager rankManager, ModerationManager moderationManager) {
+    public ChatListener(FactionManager manager, PlayerRankManager rankManager, ModerationManager moderationManager, EconomyManager economyManager) {
         this.manager = manager;
         this.rankManager = rankManager;
         this.moderationManager = moderationManager;
+        this.economyManager = economyManager;
     }
 
     @EventHandler
@@ -78,7 +81,8 @@ public class ChatListener implements Listener {
                     .append(cleanedTitle.isEmpty()
                             ? Component.empty()
                             : Component.text(cleanedTitle + " ", NamedTextColor.GREEN))
-                    .append(Component.text(player.getName(), NamedTextColor.GREEN))
+                    .append(Component.text(player.getName(), NamedTextColor.GREEN)
+                            .hoverEvent(HoverEvent.showText(buildPlayerHover(player))))
                     .append(Component.text(": ", NamedTextColor.DARK_GRAY))
                     .append(Component.text(messageText, NamedTextColor.GREEN));
 
@@ -108,7 +112,8 @@ public class ChatListener implements Listener {
                         .append(relationStars)
                         .append(Component.text(faction.getName(), relationColor))
                         .append(Component.text(" ", NamedTextColor.DARK_GRAY))
-                        .append(Component.text(player.getName(), rankNameColor))
+                        .append(Component.text(player.getName(), rankNameColor)
+                                .hoverEvent(HoverEvent.showText(buildPlayerHover(player))))
                         .append(Component.text(": ", NamedTextColor.DARK_GRAY))
                         .append(Component.text(messageText, messageColor));
                 audience.sendMessage(output);
@@ -116,17 +121,35 @@ public class ChatListener implements Listener {
         }
     }
 
+    private Component buildPlayerHover(Player player) {
+        FactionManager.Faction faction = manager.getFaction(player.getUniqueId());
+        String factionName = faction != null ? faction.getName() : "No Faction";
+        double bal = (economyManager != null && economyManager.isEnabled())
+                ? economyManager.getBalance(player) : 0;
+        return Component.text("§b" + player.getName() + "\n")
+                .append(Component.text("§7Faction: §f" + factionName + "\n"))
+                .append(Component.text("§7Balance: §f$" + formatNumber((long) bal) + "\n"))
+                .append(Component.text("§a● Currently Online"));
+    }
+
+    private String formatNumber(long num) {
+        if (num < 1000) return String.valueOf(num);
+        if (num < 1_000_000) return String.format("%.1f", num / 1000.0) + "K";
+        if (num < 1_000_000_000) return String.format("%.1f", num / 1_000_000.0) + "M";
+        return String.format("%.1f", num / 1_000_000_000.0) + "B";
+    }
+
     private NamedTextColor getRelationColor(UUID senderId, FactionManager.Faction senderFaction, net.kyori.adventure.audience.Audience viewer) {
         if (!(viewer instanceof Player playerViewer)) return NamedTextColor.WHITE;
 
         UUID viewerId = playerViewer.getUniqueId();
-        if (viewerId.equals(senderId)) return NamedTextColor.BLUE; // truce/self
 
         FactionManager.Faction viewerFaction = manager.getFaction(viewerId);
         if (viewerFaction == null || senderFaction == null) return NamedTextColor.WHITE; // neutral
 
+        // Own faction (including yourself) always shows as green
         if (viewerFaction.getName().equalsIgnoreCase(senderFaction.getName())) {
-            return NamedTextColor.BLUE; // truce/self faction
+            return NamedTextColor.GREEN;
         }
 
         if (viewerFaction.isEnemy(senderFaction.getName()) || senderFaction.isEnemy(viewerFaction.getName())) {

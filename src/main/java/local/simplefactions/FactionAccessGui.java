@@ -76,6 +76,11 @@ public class FactionAccessGui implements Listener {
         viewer.openInventory(inventory);
     }
 
+    /** Called by FactionAccessMapGui after chunk selection is confirmed. */
+    public void openPermissionEditorPublic(Player viewer, UUID targetId) {
+        openPermissionEditor(viewer, targetId);
+    }
+
     private void openPermissionEditor(Player viewer, UUID targetId) {
         FactionManager.Faction faction = manager.getFaction(viewer.getUniqueId());
         if (faction == null) {

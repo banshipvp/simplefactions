@@ -25,6 +25,7 @@ public class FCommand implements CommandExecutor, TabCompleter {
     private final FactionAccessGui accessGui;
     private final EconomyManager economyManager;
     private WarzoneManager warzoneManager;
+    private TeleportTimerManager tpTimer;
     private final Map<UUID, PendingClaimConfirmation> pendingClaimConfirmations = new HashMap<>();
     private static final long CLAIM_CONFIRM_WINDOW_MS = 20_000L;
 
@@ -50,6 +51,18 @@ public class FCommand implements CommandExecutor, TabCompleter {
     /** Called by SimpleFactionsPlugin after both FCommand and WarzoneManager are ready. */
     public void setWarzoneManager(WarzoneManager warzoneManager) {
         this.warzoneManager = warzoneManager;
+    }
+
+    /** Called by SimpleFactionsPlugin after TeleportTimerManager is ready. */
+    public void setTeleportTimerManager(TeleportTimerManager tpTimer) {
+        this.tpTimer = tpTimer;
+    }
+
+    private FactionAccessMapGui accessMapGui;
+
+    /** Called by SimpleFactionsPlugin after FactionAccessMapGui is ready. */
+    public void setAccessMapGui(FactionAccessMapGui gui) {
+        this.accessMapGui = gui;
     }
 
     /**
@@ -301,7 +314,7 @@ public class FCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        player.openInventory(faction.getChest());
+        player.openInventory(faction.openChestView());
     }
 
     /* ================= INFO / WHO ================= */
@@ -322,31 +335,37 @@ public class FCommand implements CommandExecutor, TabCompleter {
         int onlineCount = countOnlineMembers(faction);
         int totalCount = faction.getMembers().size();
 
-        player.sendMessage(" ");
-        player.sendMessage("§e§l" + faction.getName() + " §8(#" + totalCount + ")");
-
-        // Home location
         Location home = faction.getHome();
-        String homeStr = (home == null) ? "§7N/A" : "§f" + home.getBlockX() + "x §7" + home.getBlockZ() + "z";
-        player.sendMessage("§7Home: " + homeStr);
+        String homeStr = (home == null) ? "§7N/A" : "§f" + home.getBlockX() + "x §f" + home.getBlockZ() + "z";
 
-        player.sendMessage("§8" + repeat("-", 40));
+        String bar    = "§8§m" + "▬".repeat(44);
+        String midBar = "§8§m" + "─".repeat(44);
 
-        // Stats line
-        player.sendMessage("§7Power: §f" + formatNumber((long)faction.getPower()) + "§7/§f" + formatNumber(totalCount * 10000L) + "  §7Balance: §f$" + formatNumber((long)faction.getBalance()));
+        player.sendMessage(" ");
+        player.sendMessage(bar);
+        player.sendMessage("  §6§l" + faction.getName()
+                + "  §8| §7Members: §f" + onlineCount + "§7/§f" + totalCount + " online");
+        player.sendMessage(bar);
+        player.sendMessage("  §7Home      §8» " + homeStr);
+        player.sendMessage("  §7Power     §8» §f" + formatNumber((long) faction.getPower()) + " §7/ §f" + formatNumber((long) totalCount * 10_000L));
+        player.sendMessage("  §7Balance   §8» §f$" + formatNumber((long) faction.getBalance()));
+        player.sendMessage("  §7Claims    §8» §f" + faction.getClaims().size() + " §7/ §f" + faction.maxClaims());
 
-        // Spawner + Wealth line with hover breakdown
-        Component spawnerLine = Component.text(
-                "§7Spawners: §f" + spawnerCount + " §8(§f$" + formatNumber((long)spawnerValue) + "§8)  §7Wealth: §f$" + formatNumber((long)totalWealth)
-        ).hoverEvent(HoverEvent.showText(buildSpawnerBreakdownHover(faction.getName(), memberBalance, spawnerValue)));
+        // Spawner + Wealth lines with hover breakdown
+        Component spawnerLine = Component.text("  §7Spawners  §8» §f" + spawnerCount + " §8(§f$" + formatNumber((long) spawnerValue) + "§8)")
+                .hoverEvent(HoverEvent.showText(buildSpawnerBreakdownHover(faction.getName(), memberBalance, spawnerValue)));
+        Component wealthLine = Component.text("  §7Wealth    §8» §f$" + formatNumber((long) totalWealth))
+                .hoverEvent(HoverEvent.showText(Component.text(
+                        "§7Faction Bank: §f$" + formatNumber((long) faction.getBalance())
+                        + "\n§7Member Balances: §f$" + formatNumber((long) memberBalance)
+                        + "\n§7Spawner Value: §f$" + formatNumber((long) spawnerValue))));
         player.sendMessage(spawnerLine);
+        player.sendMessage(wealthLine);
 
-        player.sendMessage(" ");
-        player.sendMessage(buildMemberLineComponent(faction, true, onlineCount, totalCount));
+        player.sendMessage(midBar);
+        player.sendMessage(buildMemberLineComponent(faction, true,  onlineCount, totalCount));
         player.sendMessage(buildMemberLineComponent(faction, false, onlineCount, totalCount));
-
-        player.sendMessage(" ");
-        player.sendMessage("§7Claims: §f" + faction.getClaims().size() + "§8/§f" + faction.maxClaims());
+        player.sendMessage(bar);
         player.sendMessage(" ");
     }
     
@@ -655,11 +674,32 @@ public class FCommand implements CommandExecutor, TabCompleter {
         int members = faction.getMembers().size();
         int claims = faction.getClaims().size();
 
+        // Spawner info for this chunk
+        SpawnerStackManager ssm = manager.getSpawnerStackManager();
+        String spawnerLine;
+        if (ssm != null) {
+            Map<String, Integer> breakdown = ssm.getSpawnersBreakdownForChunk(world, chunkX, chunkZ);
+            if (breakdown.isEmpty()) {
+                spawnerLine = "§7None";
+            } else {
+                StringBuilder sb = new StringBuilder();
+                for (Map.Entry<String, Integer> e : breakdown.entrySet()) {
+                    if (!sb.isEmpty()) sb.append("§8, ");
+                    String typeName = e.getKey().substring(0, 1).toUpperCase() + e.getKey().substring(1);
+                    sb.append("§f").append(typeName).append(" §7x").append(e.getValue());
+                }
+                spawnerLine = sb.toString();
+            }
+        } else {
+            spawnerLine = "§7—";
+        }
+
         return Component.text("")
                 .append(Component.text("§d§l" + faction.getName() + " BASE CLAIM\n"))
                 .append(Component.text("§bLocation: §f" + blockX + "x §7" + blockZ + "z §8(" + chunkX + ", " + chunkZ + ") §7[" + world + "]\n"))
                 .append(Component.text("§dMembers: §f" + members + "\n"))
                 .append(Component.text("§dClaims: §f" + claims + "§7/§f" + faction.maxClaims() + "\n"))
+                .append(Component.text("§bSpawners: " + spawnerLine + "\n"))
                 .append(Component.text("§7" + faction.getDescription() + "\n"));
     }
 
@@ -1018,15 +1058,11 @@ public class FCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 3) {
-            var chunk = player.getLocation().getChunk();
-            boolean success = manager.grantAccessChunk(player.getUniqueId(), target.getUniqueId(), player.getWorld().getName(), chunk.getX(), chunk.getZ());
-            if (!success) {
-                player.sendMessage("§cCould not grant chunk access.");
+            if (accessMapGui == null) {
+                player.sendMessage("§cAccess map GUI unavailable.");
                 return;
             }
-
-            player.sendMessage("§aGranted §f" + target.getName() + "§a access for this claim chunk.");
-            target.sendMessage("§aYou now have access to a claim chunk in faction §f" + faction.getName() + "§a.");
+            accessMapGui.open(player, target.getUniqueId());
             return;
         }
 
@@ -1229,8 +1265,13 @@ public class FCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        player.teleport(loc);
-        player.sendMessage("§aTeleported to faction home.");
+        if (tpTimer != null) {
+            tpTimer.scheduleTeleport(player, loc, "§6" + faction.getName() + "§f faction home");
+        } else {
+            // Fallback if timer not yet wired (shouldn't happen in production)
+            player.teleport(loc);
+            player.sendMessage("§aTeleported to faction home.");
+        }
     }
 
     /* ================= WARPS ================= */

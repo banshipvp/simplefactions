@@ -26,6 +26,8 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
     private PlayerVaultManager playerVaultManager;
     private GlobalWarpManager globalWarpManager;
     private EnvoyManager envoyManager;
+    private RoamCommand roamCommand;
+    private TeleportTimerManager teleportTimerManager;
     private BukkitTask autoSaveTask;
     private BukkitTask timeLockTask;
 
@@ -66,9 +68,11 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         economyManager = new EconomyManager();
         upgradeGUI = new UpgradeGUI(factionManager, economyManager);
         FactionAccessGui accessGui = new FactionAccessGui(factionManager);
+        FactionAccessMapGui accessMapGui = new FactionAccessMapGui(factionManager, accessGui);
 
         FCommand fCommand = new FCommand(factionManager, upgradeGUI, accessGui, economyManager);
         fCommand.setWarzoneManager(warzoneManager);
+        fCommand.setAccessMapGui(accessMapGui);
         getCommand("f").setExecutor(fCommand);
         getCommand("f").setTabCompleter(fCommand);
         getCommand("help").setExecutor(new HelpCommand());
@@ -97,7 +101,7 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         playerRankManager = new PlayerRankManager(this);
         playerRankManager.loadData(getDataFolder());
 
-        Bukkit.getPluginManager().registerEvents(new ProtectionListener(factionManager, economyManager, playerRankManager), this);
+        Bukkit.getPluginManager().registerEvents(new ProtectionListener(factionManager, economyManager, playerRankManager, warzoneManager), this);
         Bukkit.getPluginManager().registerEvents(new TeleportProtectionListener(factionManager, warzoneManager), this);
         getServer().getPluginManager().registerEvents(new SpawnerStackListener(spawnerStackManager, factionManager), this);
         getServer().getPluginManager().registerEvents(new MobCombatListener(), this);
@@ -106,6 +110,9 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new FactionWandListener(this, factionManager), this);
         getServer().getPluginManager().registerEvents(new FactionMapAutoListener(factionManager, fCommand), this);
         getServer().getPluginManager().registerEvents(accessGui, this);
+        getServer().getPluginManager().registerEvents(accessMapGui, this);
+        getServer().getPluginManager().registerEvents(new MobDropListener(spawnerStackManager), this);
+        getServer().getPluginManager().registerEvents(new EnderPearlCooldownListener(), this);
 
         // Rank & Queue system
         moderationManager = new ModerationManager();
@@ -148,7 +155,7 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(staffTools, this);
 
         getServer().getPluginManager().registerEvents(
-            new ChatListener(factionManager, playerRankManager, moderationManager), this);
+            new ChatListener(factionManager, playerRankManager, moderationManager, economyManager), this);
 
         hubQueueManager = new HubQueueManager(this, playerRankManager);
         hubQueueManager.start();
@@ -157,10 +164,15 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         getCommand("rank").setExecutor(rankCmd);
         getCommand("rankinfo").setExecutor(rankCmd);
 
+        // Teleport timer — created after playerRankManager, factionManager, and warzoneManager are ready
+        teleportTimerManager = new TeleportTimerManager(this, factionManager, warzoneManager, playerRankManager);
+        getServer().getPluginManager().registerEvents(teleportTimerManager, this);
+        fCommand.setTeleportTimerManager(teleportTimerManager);
+
         QueueCommand queueCmd = new QueueCommand(hubQueueManager, playerRankManager);
         getCommand("queue").setExecutor(queueCmd);
 
-        HomeCommand homeCommand = new HomeCommand(playerHomeManager);
+        HomeCommand homeCommand = new HomeCommand(playerHomeManager, teleportTimerManager);
         SetHomeCommand setHomeCommand = new SetHomeCommand(playerHomeManager, playerRankManager);
         PlayerVaultCommand vaultCommand = new PlayerVaultCommand(this, playerVaultManager, playerRankManager);
         getCommand("home").setExecutor(homeCommand);
@@ -200,6 +212,12 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
         getCommand("sethub").setExecutor(hubCommand);
         getServer().getPluginManager().registerEvents(new HubJoinListener(this, hubCommand), this);
         getServer().getPluginManager().registerEvents(new HubCommandRestrictionListener(this, hubCommand, hubQueueManager, playerRankManager), this);
+
+        // Roam command
+        roamCommand = new RoamCommand(this);
+        getCommand("roam").setExecutor(roamCommand);
+        getCommand("roam").setTabCompleter(roamCommand);
+        getServer().getPluginManager().registerEvents(roamCommand, this);
 
         timeLockTask = new WorldTimeLockTask(this).runTaskTimer(this, 0L, 100L);
 
@@ -275,6 +293,10 @@ public final class SimpleFactionsPlugin extends JavaPlugin {
             envoyManager.stopAutoSpawnScheduler();
             envoyManager.save();
             envoyManager.clearActiveEnvoys();
+        }
+
+        if (roamCommand != null) {
+            roamCommand.cleanup();
         }
 
         getLogger().info("SimpleFactions disabled.");

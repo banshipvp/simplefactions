@@ -28,10 +28,12 @@ public class HomeCommand implements CommandExecutor, TabCompleter, Listener {
     private static final String MENU_TITLE = "§a§lYour Homes";
 
     private final PlayerHomeManager homeManager;
+    private final TeleportTimerManager tpTimer;
     private final Map<UUID, Map<Integer, String>> menuSlots = new LinkedHashMap<>();
 
-    public HomeCommand(PlayerHomeManager homeManager) {
+    public HomeCommand(PlayerHomeManager homeManager, TeleportTimerManager tpTimer) {
         this.homeManager = homeManager;
+        this.tpTimer     = tpTimer;
     }
 
     @Override
@@ -108,8 +110,7 @@ public class HomeCommand implements CommandExecutor, TabCompleter, Listener {
             return;
         }
 
-        player.teleport(location);
-        player.sendMessage("§aTeleported to home §f" + homeName + "§a.");
+        tpTimer.scheduleTeleport(player, location, "home §f" + homeName);
     }
 
     @EventHandler

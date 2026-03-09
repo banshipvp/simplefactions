@@ -56,15 +56,16 @@ public class SpawnerStackListener implements Listener {
         if (action == Action.LEFT_CLICK_BLOCK) {
             SpawnerStack stack = stackManager.getStack(world, bx, by, bz);
             if (stack == null) {
-                if (owner == null) {
-                    player.sendMessage(ChatColor.GRAY + "This spawner is in unclaimed territory.");
-                    return;
-                }
-                // Auto-register the spawner under the faction that owns this chunk
+                // Auto-register the spawner; use "wild" if unclaimed
                 String entityKey = getEntityTypeFromBlock(block);
-                stack = stackManager.placeSpawner(world, bx, by, bz, entityKey, owner);
-                player.sendMessage(ChatColor.YELLOW + "✦ Spawner registered with faction §6"
-                        + capitalize(owner) + "§e.");
+                String registerFaction = (owner != null) ? owner : "wild";
+                stack = stackManager.placeSpawner(world, bx, by, bz, entityKey, registerFaction);
+                if (owner != null) {
+                    player.sendMessage(ChatColor.YELLOW + "✦ Spawner registered with faction §6"
+                            + capitalize(owner) + "§e.");
+                } else {
+                    player.sendMessage(ChatColor.GRAY + "✦ Spawner registered in the wilderness.");
+                }
             }
             SpawnerType st = SpawnerType.fromEntityKey(stack.getEntityTypeKey());
             String name = st != null ? st.getDisplayName() : stack.getEntityTypeKey();
@@ -87,12 +88,6 @@ public class SpawnerStackListener implements Listener {
         }
 
         // ── RIGHT CLICK → attempt stack ───────────────────────────────────────
-        // Must be in a claimed chunk to stack
-        if (owner == null) {
-            // Unclaimed land – normal block interaction; don't interfere
-            return;
-        }
-
         ItemStack held = player.getInventory().getItemInMainHand();
         if (held.getType() != Material.SPAWNER) return;
 
@@ -102,8 +97,17 @@ public class SpawnerStackListener implements Listener {
 
         SpawnerStack existing = stackManager.getStack(world, bx, by, bz);
         if (existing == null) {
-            player.sendMessage(ChatColor.RED + "There is no tracked spawner stack here.");
-            return;
+            // Auto-register the spawner on first right-click too
+            String blockType = getEntityTypeFromBlock(block);
+            if (!blockType.equalsIgnoreCase(heldType)) {
+                SpawnerType heldSt = SpawnerType.fromEntityKey(heldType);
+                String heldName = heldSt != null ? heldSt.getDisplayName() : heldType;
+                player.sendMessage(ChatColor.RED + "✖ The spawner in your hand (" + heldName + ") doesn't match this block.");
+                event.setCancelled(true);
+                return;
+            }
+            String registerFaction = (owner != null) ? owner : "wild";
+            existing = stackManager.placeSpawner(world, bx, by, bz, blockType, registerFaction);
         }
 
         if (!existing.getEntityTypeKey().equalsIgnoreCase(heldType)) {
@@ -121,14 +125,16 @@ public class SpawnerStackListener implements Listener {
             return;
         }
 
-        // Permission check: must be able to place blocks in this claim
-        FactionManager.Faction playerFaction = factionManager.getFaction(player.getUniqueId());
-        boolean canStack = playerFaction != null && playerFaction.getName().equalsIgnoreCase(owner);
-        if (!canStack && !player.hasPermission("simplefactions.admin")) {
-            player.sendMessage(ChatColor.RED + "✖ You cannot stack spawners here — this claim belongs to §7"
-                    + capitalize(owner) + "§c.");
-            event.setCancelled(true);
-            return;
+        // Permission check: claimed chunks require faction membership; wild is open to all
+        if (owner != null) {
+            FactionManager.Faction playerFaction = factionManager.getFaction(player.getUniqueId());
+            boolean canStack = playerFaction != null && playerFaction.getName().equalsIgnoreCase(owner);
+            if (!canStack && !player.hasPermission("simplefactions.admin")) {
+                player.sendMessage(ChatColor.RED + "✖ You cannot stack spawners here — this claim belongs to §7"
+                        + capitalize(owner) + "§c.");
+                event.setCancelled(true);
+                return;
+            }
         }
 
         // Do the stack
