@@ -46,19 +46,68 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter, Listen
         private final Map<UUID, Integer> openIconPickers = new ConcurrentHashMap<>();
     private final Set<UUID> awaitingFilterInput = ConcurrentHashMap.newKeySet();
     private final Set<UUID> reopenMenuOnClose = ConcurrentHashMap.newKeySet();
-            private static final Map<Integer, Material> ICON_PICKER_SLOTS = Map.ofEntries(
-                Map.entry(10, Material.ENDER_PEARL),
-                Map.entry(11, Material.DIAMOND_BLOCK),
-                Map.entry(12, Material.DIAMOND_ORE),
-                Map.entry(13, Material.ENDER_EYE),
-                Map.entry(14, Material.PAPER),
-                Map.entry(15, Material.BOOK),
-                Map.entry(16, Material.SUGAR),
-                Map.entry(19, Material.GLOWSTONE_DUST),
-                Map.entry(20, Material.BEACON),
-                Map.entry(21, Material.EXPERIENCE_BOTTLE),
-                Map.entry(22, Material.INK_SAC)
-            );
+
+    private static final Map<Integer, Material> ICON_PICKER_SLOTS;
+    private static final Map<Material, String> ICON_PICKER_NAMES;
+    static {
+        Map<Integer, Material> slots = new LinkedHashMap<>();
+        slots.put(9,  Material.DIAMOND);
+        slots.put(10, Material.EMERALD);
+        slots.put(11, Material.GOLD_INGOT);
+        slots.put(12, Material.IRON_INGOT);
+        slots.put(13, Material.REDSTONE);
+        slots.put(14, Material.TNT);
+        slots.put(15, Material.SPAWNER);
+        slots.put(16, Material.STONE);
+        slots.put(17, Material.GRASS_BLOCK);
+        slots.put(18, Material.OAK_PLANKS);
+        slots.put(19, Material.GLOWSTONE_DUST);
+        slots.put(20, Material.SUGAR);
+        slots.put(21, Material.PAPER);
+        slots.put(22, Material.INK_SAC);
+        slots.put(23, Material.DIAMOND_HELMET);
+        slots.put(24, Material.DIAMOND_CHESTPLATE);
+        slots.put(25, Material.DIAMOND_LEGGINGS);
+        slots.put(26, Material.DIAMOND_BOOTS);
+        slots.put(27, Material.DIAMOND_SWORD);
+        slots.put(28, Material.DIAMOND_AXE);
+        slots.put(29, Material.DIAMOND_PICKAXE);
+        slots.put(30, Material.EXPERIENCE_BOTTLE);
+        slots.put(31, Material.BOOK);
+        slots.put(32, Material.BEACON);
+        slots.put(33, Material.ENDER_EYE);
+        slots.put(34, Material.ENDER_PEARL);
+        ICON_PICKER_SLOTS = java.util.Collections.unmodifiableMap(slots);
+
+        Map<Material, String> names = new HashMap<>();
+        names.put(Material.DIAMOND,           "Diamond");
+        names.put(Material.EMERALD,           "Emerald");
+        names.put(Material.GOLD_INGOT,        "Gold");
+        names.put(Material.IRON_INGOT,        "Iron");
+        names.put(Material.REDSTONE,          "Redstone");
+        names.put(Material.TNT,               "TNT");
+        names.put(Material.SPAWNER,           "Spawner");
+        names.put(Material.STONE,             "Stone");
+        names.put(Material.GRASS_BLOCK,       "Grass");
+        names.put(Material.OAK_PLANKS,        "Wood Planks");
+        names.put(Material.GLOWSTONE_DUST,    "Glowstone Dust");
+        names.put(Material.SUGAR,             "Sugar");
+        names.put(Material.PAPER,             "Paper");
+        names.put(Material.INK_SAC,           "Ink Sac");
+        names.put(Material.DIAMOND_HELMET,    "Diamond Helmet");
+        names.put(Material.DIAMOND_CHESTPLATE,"Diamond Chestplate");
+        names.put(Material.DIAMOND_LEGGINGS,  "Diamond Leggings");
+        names.put(Material.DIAMOND_BOOTS,     "Diamond Boots");
+        names.put(Material.DIAMOND_SWORD,     "Diamond Sword");
+        names.put(Material.DIAMOND_AXE,       "Diamond Axe");
+        names.put(Material.DIAMOND_PICKAXE,   "Diamond Pickaxe");
+        names.put(Material.EXPERIENCE_BOTTLE, "XP Bottle");
+        names.put(Material.BOOK,              "Book");
+        names.put(Material.BEACON,            "Beacon");
+        names.put(Material.ENDER_EYE,         "Eye of Ender");
+        names.put(Material.ENDER_PEARL,       "Ender Pearl");
+        ICON_PICKER_NAMES = java.util.Collections.unmodifiableMap(names);
+    }
 
     public PlayerVaultCommand(JavaPlugin plugin, PlayerVaultManager vaultManager, PlayerRankManager rankManager) {
         this.plugin = plugin;
@@ -367,7 +416,7 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter, Listen
         Integer index = slotMap.get(event.getSlot());
         if (index == null) return;
 
-        if (event.getClick() == ClickType.MIDDLE) {
+        if (event.getClick() == ClickType.MIDDLE || event.getClick() == ClickType.CREATIVE) {
             awaitingRename.put(playerId, index);
             openIconPickers.remove(playerId);
             player.closeInventory();
@@ -476,7 +525,7 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter, Listen
             return;
         }
 
-        if (event.getSlot() == 40) {
+        if (event.getSlot() == 49) {
             openIconPickers.remove(playerId);
             openVaultMenu(player);
             return;
@@ -489,18 +538,20 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter, Listen
         data.setIcon(selected);
         vaultManager.save();
         openIconPickers.remove(playerId);
-        player.sendMessage("§aPV " + index + " icon set to §f" + selected.name() + "§a.");
+        player.sendMessage("§aPV " + index + " icon set to §f" + ICON_PICKER_NAMES.getOrDefault(selected, selected.name().replace('_', ' ')) + "§a.");
         openVaultMenu(player);
     }
 
     private void openIconPicker(Player player, int index) {
-        Inventory picker = Bukkit.createInventory(null, 45, ICON_PICKER_PREFIX + index);
+        Inventory picker = Bukkit.createInventory(null, 54, ICON_PICKER_PREFIX + index);
 
         for (Map.Entry<Integer, Material> entry : ICON_PICKER_SLOTS.entrySet()) {
             ItemStack icon = new ItemStack(entry.getValue());
             ItemMeta meta = icon.getItemMeta();
             if (meta != null) {
-                meta.setDisplayName("§b" + entry.getValue().name().toLowerCase(Locale.ROOT));
+                String name = ICON_PICKER_NAMES.getOrDefault(entry.getValue(),
+                        entry.getValue().name().replace('_', ' '));
+                meta.setDisplayName("§b" + name);
                 meta.setLore(List.of("§7Click to set this as your PV icon"));
                 icon.setItemMeta(meta);
             }
@@ -513,7 +564,7 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter, Listen
             backMeta.setDisplayName("§cBack");
             back.setItemMeta(backMeta);
         }
-        picker.setItem(40, back);
+        picker.setItem(49, back);
 
         openIconPickers.put(player.getUniqueId(), index);
         player.openInventory(picker);
