@@ -317,6 +317,63 @@ public class WarzoneManager {
         return -1;
     }
 
+    /**
+     * Returns a random solid-ground location inside a warzone region or chunk.
+     * Tries region-based zones first, then falls back to chunk-based warzone entries.
+     * Returns {@code null} if no warzone is defined or no valid surface could be found.
+     */
+    public Location getRandomWarzoneSpawnLocation() {
+        java.util.concurrent.ThreadLocalRandom rng = java.util.concurrent.ThreadLocalRandom.current();
+
+        // Prefer region-based warzone entries (they have explicit bounds)
+        java.util.List<ZoneRegion> warzoneRegions = new java.util.ArrayList<>();
+        for (ZoneRegion r : regions) {
+            if (r.type == WarzoneType.WARZONE) warzoneRegions.add(r);
+        }
+
+        if (!warzoneRegions.isEmpty()) {
+            ZoneRegion region = warzoneRegions.get(rng.nextInt(warzoneRegions.size()));
+            org.bukkit.World world = Bukkit.getWorld(region.world);
+            if (world != null) {
+                for (int attempt = 0; attempt < 20; attempt++) {
+                    int x = rng.nextInt(region.minX, region.maxX + 1);
+                    int z = rng.nextInt(region.minZ, region.maxZ + 1);
+                    int y = world.getHighestBlockYAt(x, z);
+                    Location loc = new Location(world, x + 0.5, y + 1.0, z + 0.5);
+                    if (!world.getBlockAt(x, y, z).isLiquid()) return loc;
+                }
+            }
+        }
+
+        // Fall back to chunk-based warzone entries
+        java.util.List<String> warzoneChunkKeys = new java.util.ArrayList<>();
+        for (Map.Entry<String, WarzoneType> e : chunkTypes.entrySet()) {
+            if (e.getValue() == WarzoneType.WARZONE) warzoneChunkKeys.add(e.getKey());
+        }
+
+        if (!warzoneChunkKeys.isEmpty()) {
+            for (int attempt = 0; attempt < 10; attempt++) {
+                String key = warzoneChunkKeys.get(rng.nextInt(warzoneChunkKeys.size()));
+                // key format: "world:chunkX:chunkZ"
+                String[] parts = key.split(":");
+                if (parts.length < 3) continue;
+                org.bukkit.World world = Bukkit.getWorld(parts[0]);
+                if (world == null) continue;
+                try {
+                    int cx = Integer.parseInt(parts[1]);
+                    int cz = Integer.parseInt(parts[2]);
+                    int bx = cx * 16 + rng.nextInt(16);
+                    int bz = cz * 16 + rng.nextInt(16);
+                    int by = world.getHighestBlockYAt(bx, bz);
+                    Location loc = new Location(world, bx + 0.5, by + 1.0, bz + 0.5);
+                    if (!world.getBlockAt(bx, by, bz).isLiquid()) return loc;
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
+        return null;
+    }
+
     static class ZoneRegion {
         final String world;
         final int minX;

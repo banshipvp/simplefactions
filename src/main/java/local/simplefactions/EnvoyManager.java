@@ -356,6 +356,10 @@ public class EnvoyManager {
                 block = above;
             } else {
                 int highest = world.getHighestBlockYAt(x, z);
+                // Never place chests above y=130 to avoid spawning on tall structures.
+                if (highest + 1 > 130) {
+                    return null;
+                }
                 block = world.getBlockAt(x, highest + 1, z);
             }
         }
