@@ -54,25 +54,33 @@ public class FactionWandListener implements Listener {
             return;
         }
 
-        Inventory inv = container.getInventory();
-        int available = countTnt(inv.getContents());
-        if (available <= 0) {
-            player.sendMessage("§cThis container has no TNT.");
-            return;
-        }
-
-        int removed = removeTnt(inv, available);
-        if (removed <= 0) {
-            player.sendMessage("§cCould not transfer TNT from this container.");
-            return;
-        }
-
-        faction.addTnt(removed);
-        container.update();
         event.setCancelled(true);
+        Inventory inv = container.getInventory();
+
+        // Count available resources
+        int tntCount = countMaterial(inv.getContents(), Material.TNT);
+        int gunpowderCount = countMaterial(inv.getContents(), Material.GUNPOWDER);
+        int tntFromGunpowder = gunpowderCount / 5;
+        int leftoverGunpowder = gunpowderCount % 5;
+
+        int totalTnt = tntCount + tntFromGunpowder;
+        if (totalTnt <= 0) {
+            player.sendMessage("§cThis container has no TNT or gunpowder (need 5 gunpowder per TNT).");
+            return;
+        }
+
+        // Remove TNT and gunpowder (keeping leftover gunpowder)
+        removeMaterial(inv, Material.TNT, tntCount);
+        removeMaterial(inv, Material.GUNPOWDER, gunpowderCount - leftoverGunpowder);
+
+        faction.addTnt(totalTnt);
+        container.update();
 
         int total = faction.getTntBank();
-        player.sendMessage("§aTNT Wand transferred §f" + removed + " TNT §ato faction bank.");
+        player.sendMessage("§aTNT Wand deposited §f" + totalTnt + " TNT §ato faction bank.");
+        if (tntFromGunpowder > 0) {
+            player.sendMessage("§7(converted §f" + (gunpowderCount - leftoverGunpowder) + " gunpowder§7 → §f" + tntFromGunpowder + " TNT§7)");
+        }
         player.sendMessage("§7Faction TNT Bank: §f" + total + " TNT §8(" + (total / 64) + " stacks, " + (total % 64) + " individual)");
     }
 
@@ -126,37 +134,31 @@ public class FactionWandListener implements Listener {
         player.sendMessage("§7New balance: §a$" + String.format("%.2f", economy.getBalance(player)));
     }
 
-    private int countTnt(ItemStack[] contents) {
+    private int countMaterial(ItemStack[] contents, Material material) {
         int total = 0;
         for (ItemStack item : contents) {
-            if (item != null && item.getType() == Material.TNT) {
+            if (item != null && item.getType() == material) {
                 total += item.getAmount();
             }
         }
         return total;
     }
 
-    private int removeTnt(Inventory inventory, int amount) {
+    private void removeMaterial(Inventory inventory, Material material, int amount) {
         int remaining = amount;
         ItemStack[] contents = inventory.getContents();
-
         for (int slot = 0; slot < contents.length && remaining > 0; slot++) {
             ItemStack stack = contents[slot];
-            if (stack == null || stack.getType() != Material.TNT) continue;
-
+            if (stack == null || stack.getType() != material) continue;
             int take = Math.min(stack.getAmount(), remaining);
             int left = stack.getAmount() - take;
-
             if (left <= 0) {
                 inventory.setItem(slot, null);
             } else {
                 stack.setAmount(left);
                 inventory.setItem(slot, stack);
             }
-
             remaining -= take;
         }
-
-        return amount - remaining;
     }
 }
