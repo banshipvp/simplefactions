@@ -106,7 +106,52 @@ public class EnvoyCommand implements CommandExecutor, TabCompleter, Listener {
                 return true;
             }
 
-            sender.sendMessage("§cUsage: /envoy [start [default|nether]|nether|clear]");
+            if (args[0].equalsIgnoreCase("edit")) {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage("§cThis sub-command can only be used by players.");
+                    return true;
+                }
+                if (args.length < 2) {
+                    player.sendMessage("§cUsage: /envoy edit <simple|rare|legendary|godly|heroic_nether>");
+                    return true;
+                }
+                String tier = envoyManager.normalizeTier(args[1]);
+                openEditor(player, tier);
+                return true;
+            }
+
+            if (args[0].equalsIgnoreCase("add")) {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage("§cThis sub-command can only be used by players.");
+                    return true;
+                }
+                if (args.length < 3) {
+                    player.sendMessage("§cUsage: /envoy add <tier> <chancePercent>");
+                    return true;
+                }
+                ItemStack inHand = player.getInventory().getItemInMainHand();
+                if (inHand == null || inHand.getType() == Material.AIR) {
+                    player.sendMessage("§cHold the item you want to add in your main hand.");
+                    return true;
+                }
+                double chance;
+                try {
+                    chance = Double.parseDouble(args[2]);
+                } catch (NumberFormatException ignored) {
+                    player.sendMessage("§cChance must be a number.");
+                    return true;
+                }
+                if (chance <= 0) {
+                    player.sendMessage("§cChance must be greater than 0.");
+                    return true;
+                }
+                String tier = envoyManager.normalizeTier(args[1]);
+                envoyManager.addLoot(tier, inHand.clone(), chance);
+                player.sendMessage("§aAdded item to §f" + tier + " §aloot pool with §f" + chance + "% §achance.");
+                return true;
+            }
+
+            sender.sendMessage("§cUsage: /envoy [start [default|nether]|nether|clear|edit <tier>|add <tier> <chance>]");
             return true;
         }
 
@@ -357,8 +402,10 @@ public class EnvoyCommand implements CommandExecutor, TabCompleter, Listener {
         if (!canManage(sender)) return List.of();
 
         if (cmd.equals("envoy")) {
-            if (args.length == 1) return filter(List.of("start", "nether", "clear"), args[0]);
+            if (args.length == 1) return filter(List.of("start", "nether", "clear", "edit", "add"), args[0]);
             if (args.length == 2 && args[0].equalsIgnoreCase("start")) return filter(List.of("default", "nether"), args[1]);
+            if (args.length == 2 && (args[0].equalsIgnoreCase("edit") || args[0].equalsIgnoreCase("add"))) return filter(envoyManager.getTiers(), args[1]);
+            if (args.length == 3 && args[0].equalsIgnoreCase("add")) return filter(List.of("5", "10", "20", "30", "50"), args[2]);
             return List.of();
         }
 
